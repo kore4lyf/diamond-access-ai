@@ -1,0 +1,5345 @@
+# AGENTS.md file
+AGENTS.md
+
+# Documentation directory
+doc/
+
+# Node modules
+node_modules/
+
+# Build outputs
+dist/
+build/
+out/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+*.log
+logs/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
+
+# Dependency directories
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# next.js build output
+.next
+
+# nuxt.js build output
+.nuxt
+
+# vuepress build output
+.vuepress/dist
+
+# Serverless directories
+.serverless/
+
+# FuseBox cache
+.fusebox/
+
+# DynamoDB Local files
+.dynamodb/
+
+# TernJS port file
+.tern-port
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+
+# Package manager files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# TypeScript
+*.tsbuildinfo
+
+# Testing
+.jest/
+
+# Deployment
+deploy/
+*.zip
+*.tar.gz
+
+# Local development
+.local
+config/local.json
+
+# Browser extension files
+*.crx
+*.xpi
+
+# Chrome extension specific
+chrome-extension/
+manifest.json
+
+# Firefox extension specific
+firefox-extension/
+
+# Build artifacts
+*.o
+*.obj
+
+# Debug files
+debug/
+*.debug
+
+# Profiling files
+*.prof
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache directories
+.cache/
+__pycache__/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Python
+*.py[cod]
+*$py.class
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Ruby
+*.gem
+/.config
+/coverage/
+/coverage/
+/spec/reports/
+/spec/examples.txt
+/test/tmp/
+/test/version_tmp/
+/tmp/
+
+# Rust
+/target/
+Cargo.lock
+
+# Go
+/vendor/
+*.test
+*.out
+*.prof
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+
+# C/C++
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+
+# PHP
+composer.lock
+vendor/
+
+# Perl
+*.pm
+*.c
+
+# Ruby on Rails
+tmp/
+*.log
+*.pid
+*.seed
+*.pid.lock
+
+# Django
+*.log
+*.pot
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+__pycache__/
+
+# Flask
+instance/
+.webassets-cache
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# Local build files
+build/
+local_build/
+
+# Docker
+.dockerignore
+
+# Kubernetes
+kubeconfig.yaml
+*.kubeconfig
+
+# AWS
+.aws/
+aws-exports.js
+
+# Firebase
+.firebase
+
+# Vercel
+.vercel
+
+# Netlify
+.netlify
+
+# Railway
+.railway
+
+# Heroku
+.heroku
+
+# Azure
+.azure/
+
+# Google Cloud
+.gcloud/
+
+# Docker
+docker-compose.override.yml
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Ansible
+ansible.cfg
+inventory/
+group_vars/
+host_vars/
+
+# Puppet
+manifests/
+modules/
+
+# Chef
+chef/
+cookbooks/
+
+# Salt
+salt/
+pillar/
+
+# Travis CI
+.travis.yml
+
+# CircleCI
+.circleci/
+
+# Jenkins
+Jenkinsfile
+.jenkins/
+
+# GitHub Actions
+.github/
+
+# GitLab CI
+.gitlab-ci.yml
+
+# Bitrise
+bitrise.yml
+
+# AppVeyor
+appveyor.yml
+
+# Codecov
+codecov.yml
+
+# Coveralls
+.coveralls.yml
+
+# Code Climate
+.codeclimate.yml
+
+# Scrutinizer
+scrutinizer.yml
+
+# DeepSource
+.deepsource.toml
+
+# Sentry
+.sentryclirc
+
+# Rollbar
+.rollbar.json
+
+# Honeybadger
+.honeybadger.yml
+
+# Bugsnag
+.bugsnag.yml
+
+# New Relic
+.newrelic
+
+# Datadog
+.datadog/
+
+# Prometheus
+prometheus.yml
+
+# Grafana
+grafana/
+
+# Jaeger
+jaeger/
+
+# Zipkin
+zipkin/
+
+# ELK stack
+elasticsearch/
+logstash/
+kibana/
+
+# Fluentd
+fluentd/
+
+# Logrotate
+logrotate/
+
+# Rsyslog
+rsyslog/
+
+# Systemd logs
+journal/
+
+# Application specific
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+
+# Temporary files
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# AWS
+.aws/
+aws-exports.js
+amplify/
+aws-configuration.json
+
+# Google Cloud
+.gcloud/
+gcloud-key.json
+service-account.json
+
+# Azure
+.azure/
+azure-key.json
+service-principal.json
+
+# Firebase
+.firebase/firebase.json
+.firebase/.firebaserc
+
+# Heroku
+.heroku/
+heroku.env
+
+# Vercel
+.vercel
+.vercel.json
+
+# Netlify
+.netlify
+.netlify.toml
+
+# Railway
+.railway
+.railway.toml
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Kubernetes
+kubeconfig.yaml
+*.kubeconfig
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Ansible
+ansible.cfg
+inventory/
+group_vars/
+host_vars/
+
+# Puppet
+manifests/
+modules/
+
+# Chef
+chef/
+cookbooks/
+
+# Salt
+salt/
+pillar/
+
+# CI/CD
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Private keys
+id_rsa
+id_dsa
+*.pem
+*.key
+*.ppk
+
+# Certificates
+*.crt
+*.cer
+*.cert
+*.p12
+*.pfx
+
+# Tokens
+*.token
+*.jwt
+*.bearer
+
+# Password files
+*.password
+*.pwd
+*.pass
+
+# SSH
+/.ssh
+/.ssh/*
+
+# Cloud provider files
+.aws/
+.gcloud/
+.azure/
+.firebase/
+.heroku/
+.vercel/
+.netlify/
+.railway/
+
+# CI/CD files
+.travis.yml
+.circleci/
+.gitlab-ci.yml
+Jenkinsfile
+.appveyor.yml
+.github/
+bitrise.yml
+
+# Monitoring files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+prometheus.yml
+grafana/
+jaeger/
+zipkin/
+elasticsearch/
+logstash/
+kibana/
+fluentd/
+logrotate/
+rsyslog/
+journal/
+
+# Application specific files
+*.log
+*.error
+*.err
+*.out
+*.tmp
+*.temp
+tmp/
+temp/
+temp_files/
+temp_files/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.rej
+
+# Swap files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+*.sublime-project
+*.sublime-workspace
+
+# Editor files
+*.patch
+*.diff
+
+# Archive files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.tar.gz
+*.zip
+*.bz2
+*.xz
+
+# Virtual machine files
+*.vmdk
+*.vdi
+*.vbox
+*.ova
+*.ovf
+
+# Disk images
+*.img
+*.iso
+*.dmg
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.accdb
+
+# Configuration files with sensitive data
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env.staging.local
+
+# API keys and secrets
+*.key
+*.pem
+*.crt
+*.p12
+doc/
