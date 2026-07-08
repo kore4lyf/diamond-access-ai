@@ -3,7 +3,8 @@ AGENTS.md
 
 # Documentation directory
 doc/
-
+doc/*
+doc/TO-*
 # Node modules
 node_modules/
 
