@@ -5343,3 +5343,14 @@ Thumbs.db
 *.crt
 *.p12
 doc/
+
+# Diamond Access AI — WXT build artifacts
+.output/
+.wxt/
+*.env*
+
+# Track the lockfile for reproducible installs (pnpm --frozen-lockfile)
+!pnpm-lock.yaml
+
+# The global lib/ rule above catches src/lib/ — un-ignore our lib dir
+!src/lib/
