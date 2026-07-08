@@ -1,4 +1,500 @@
-// TODO(Phase B): implement extractPageStructure()
-export function extractPageStructure(): unknown {
-  throw new Error('Not implemented — Phase B');
+/**
+ * Diamond Access AI — DOM Walk Engine
+ *
+ * Phase B: Turns the live page into a compact text tree the LLM reasons over.
+ * AI is invoked per *action*, not per *element*, so this tree must be cheap
+ * to build and send.
+ *
+ * Architecture:
+ *   extractPageStructure()     — thin wrapper over document.body
+ *   extractPageStructureFromRoot(root, maxChars?) — pure function, jsdom-testable
+ *
+ * Output format (§3.1 of DOC-PAGE-MODEL):
+ *   [indent][role] "[name]" [value] [states] [target]
+ *
+ * Truncation (§3.4 / TO-DEV §2):
+ *   Configurable max chars (default 1500). Keeps first 3 depth levels fully,
+ *   summarizes deeper elements.
+ *
+ * Guarantees:
+ *   - Read-only (no DOM mutation)
+ *   - Deterministic (same DOM → same string)
+ *   - No network / Chrome API calls inside FromRoot
+ *   - Returns '' for empty body
+ */
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Elements whose children are not walked and whose content is never relevant. */
+const SKIP_TAGS = new Set([
+  'SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'MATH',
+  'META', 'LINK', 'HEAD', 'TEMPLATE',
+  'IFRAME', 'CANVAS', 'VIDEO', 'AUDIO',
+]);
+
+/** CSS selector for elements that should be skipped. */
+const SKIP_SELECTOR = '[aria-hidden="true"], [hidden], [inert]';
+
+/**
+ * Map from HTML tag name to implicit ARIA role.
+ * Functions receive the element so they can branch on type/attributes.
+ */
+const IMPLICIT_ROLES: Record<string, string | ((el: Element) => string | null)> = {
+  'A':          (el: Element) => (el as HTMLAnchorElement).href ? 'link' : null,
+  'BUTTON':     'button',
+  'IMG':        'img',
+  'INPUT':      (el: Element) => {
+    const type = (el as HTMLInputElement).type?.toLowerCase() ?? 'text';
+    const map: Record<string, string> = {
+      text: 'textbox', email: 'textbox', password: 'textbox',
+      search: 'searchbox', tel: 'textbox', url: 'textbox',
+      checkbox: 'checkbox', radio: 'radio',
+      submit: 'button', reset: 'button', button: 'button',
+      range: 'slider', number: 'spinbutton',
+      file: 'button', image: 'button',
+    };
+    return map[type] ?? 'textbox';
+  },
+  'SELECT':     'listbox',
+  'TEXTAREA':   'textbox',
+  'NAV':        'navigation',
+  'MAIN':       'main',
+  'HEADER':     'banner',
+  'FOOTER':     'contentinfo',
+  'ASIDE':      'complementary',
+  'SECTION':    'region',
+  'FORM':       'form',
+  'TABLE':      'table',
+  'UL':         'list',
+  'OL':         'list',
+  'LI':         'listitem',
+  'H1':         'heading',
+  'H2':         'heading',
+  'H3':         'heading',
+  'H4':         'heading',
+  'H5':         'heading',
+  'H6':         'heading',
+};
+
+/** Default maximum output length in characters. */
+const DEFAULT_MAX_CHARS = 1500;
+
+/** Truncation depth threshold — keep these levels fully. */
+const KEEP_DEPTH = 3;
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+
+interface LineEntry {
+  text: string;
+  depth: number;
+  role: string;
+}
+
+// ---------------------------------------------------------------------------
+// DOM helpers
+// ---------------------------------------------------------------------------
+
+/** Check whether an element should be excluded from the tree. */
+function shouldSkipElement(el: Element): boolean {
+  const tag = el.tagName;
+  if (SKIP_TAGS.has(tag)) return true;
+
+  try {
+    if (el.matches(SKIP_SELECTOR)) return true;
+  } catch {
+    // Gracefully handle invalid selectors in some environments
+  }
+
+  // IMG: only include if it has non-empty alt text
+  if (tag === 'IMG') {
+    const alt = el.getAttribute('alt');
+    // Skip if no alt attribute, or alt is null/undefined, or alt is empty string
+    return alt === null || alt === undefined || alt.trim() === '';
+  }
+
+  // Skip <br> (line break — no semantic value)
+  if (tag === 'BR') return true;
+
+  // Skip <wbr> (word break opportunity)
+  if (tag === 'WBR') return true;
+
+  // Skip <hr> (thematic break — not actionable)
+  if (tag === 'HR') return true;
+
+  return false;
+}
+
+/** Get the heading level (1-6) or 0 if not a heading. */
+function getHeadingLevel(tag: string): number {
+  if (tag === 'H1') return 1;
+  if (tag === 'H2') return 2;
+  if (tag === 'H3') return 3;
+  if (tag === 'H4') return 4;
+  if (tag === 'H5') return 5;
+  if (tag === 'H6') return 6;
+  return 0;
+}
+
+/** Return the display string for the role bracket, e.g. "heading level=2". */
+function getRoleDisplay(el: Element): string {
+  const tag = el.tagName;
+
+  // Heading level is embedded in the role bracket: [heading level=1]
+  const hLevel = getHeadingLevel(tag);
+  if (hLevel > 0) return `heading level=${hLevel}`;
+
+  // Explicit role attribute
+  const explicit = el.getAttribute('role');
+  if (explicit) return explicit;
+
+  // Implicit role from tag → role mapping
+  const implicit = IMPLICIT_ROLES[tag];
+  if (implicit === undefined) return '';
+  if (typeof implicit === 'function') return implicit(el) ?? '';
+  return implicit;
+}
+
+/**
+ * Roles that are "leaf" elements — they represent actionable or
+ * content-bearing nodes. For these, textContent is a valid fallback
+ * for the accessible name.
+ *
+ * Container roles (form, navigation, main, region, banner, list, etc.)
+ * MUST NOT fall back to textContent because it would regurgitate all
+ * descendant text that is already represented by child element lines.
+ */
+const LEAF_ROLES = new Set([
+  'heading',
+  'link',
+  'button',
+  'img',
+  'textbox',
+  'searchbox',
+  'checkbox',
+  'radio',
+  'slider',
+  'spinbutton',
+  'listitem',
+  'option',
+]);
+
+/** Returns the base role string (e.g. 'heading' from 'heading level=1'). */
+function baseRole(roleDisplay: string): string {
+  return roleDisplay.split(' ')[0];
+}
+
+/** True if the role is leaf-type (textContent is a valid name fallback). */
+function isLeafRole(roleDisplay: string): boolean {
+  const role = baseRole(roleDisplay);
+  return !role || LEAF_ROLES.has(role);
+}
+
+/**
+ * Compute the accessible name of an element.
+ *
+ * Order per simplified ARIA name-computation spec:
+ *   1. aria-label
+ *   2. aria-labelledby (text content of referenced element)
+ *   3. alt (for images and input[type=image])
+ *   4. title attribute
+ *   5. <label for="id"> association
+ *   6. wrapping <label> (input nested inside label)
+ *   7. placeholder (for inputs)
+ *   8. Visible text content — ONLY for leaf roles (heading, link, button, etc.)
+ *
+ * @param el - Element to compute name for
+ * @param roleDisplay - Pre-computed role display string (avoids recomputation)
+ */
+function getAccessibleName(el: Element, roleDisplay: string): string {
+  // 1. aria-label
+  const ariaLabel = el.getAttribute('aria-label');
+  if (ariaLabel?.trim()) return ariaLabel.trim();
+
+  // 2. aria-labelledby
+  const labelledBy = el.getAttribute('aria-labelledby');
+  if (labelledBy) {
+    try {
+      const ref = (el.ownerDocument ?? document).getElementById(labelledBy);
+      if (ref?.textContent) {
+        const text = ref.textContent.trim();
+        if (text) return text;
+      }
+    } catch {
+      // getElementById doesn't throw, but guard anyway
+    }
+  }
+
+  // 3. alt attribute (images and input[type=image])
+  if (el.tagName === 'IMG' || el.tagName === 'INPUT') {
+    const alt = el.getAttribute('alt');
+    if (alt !== null && alt !== undefined) return alt;
+  }
+
+  // 4. title attribute
+  const title = el.getAttribute('title');
+  if (title?.trim()) return title.trim();
+
+  // 5. Native label association via el.labels (HTMLInputElement,
+  //    HTMLSelectElement, HTMLTextAreaElement, HTMLButtonElement).
+  //    Handles both <label for="id"> and wrapping <label>.
+  //    Only checks if element is in the document tree.
+  if (
+    el.isConnected &&
+    ('labels' in el)
+  ) {
+    try {
+      const labels = (el as HTMLInputElement).labels;
+      if (labels && labels.length > 0) {
+        const text = labels[0].textContent?.trim();
+        if (text) return text;
+      }
+    } catch {
+      // labels property may throw in unusual environments
+    }
+  }
+
+  // 7. placeholder (for inputs)
+  const placeholder = el.getAttribute('placeholder');
+  if (placeholder?.trim()) return placeholder.trim();
+
+  // 8. Visible text content — ONLY for leaf roles, not containers
+  if (!isLeafRole(roleDisplay)) {
+    // Container element — textContent would include children's text
+    return '';
+  }
+
+  const text = el.textContent?.trim();
+  if (text) return text.length > 100 ? text.slice(0, 100) + '...' : text;
+
+  return '';
+}
+
+/** Get the current value for input/select/textarea elements. */
+function getValue(el: Element): string {
+  const tag = el.tagName;
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+    const input = el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+    return input.value ?? '';
+  }
+  return '';
+}
+
+/** Build the states string (aria-* attributes + disabled/readonly). */
+function getStates(el: Element): string {
+  const parts: string[] = [];
+
+  const expanded = el.getAttribute('aria-expanded');
+  if (expanded !== null) parts.push(`expanded=${expanded}`);
+
+  const checked = el.getAttribute('aria-checked');
+  if (checked !== null) parts.push(`checked=${checked}`);
+
+  const selected = el.getAttribute('aria-selected');
+  if (selected !== null) parts.push(`selected=${selected}`);
+
+  // HTML boolean properties — check on elements that support them
+  if ('disabled' in el && (el as HTMLInputElement).disabled) parts.push('disabled');
+  if ('readOnly' in el && (el as HTMLInputElement).readOnly) parts.push('readonly');
+
+  return parts.join(' ');
+}
+
+/** Get the navigation target for links and forms. */
+function getTarget(el: Element): string {
+  const tag = el.tagName;
+  if (tag === 'A') {
+    const href = (el as HTMLAnchorElement).getAttribute('href');
+    // Skip empty, fragment-only, and javascript: links
+    if (href && href !== '#' && !href.startsWith('javascript:')) return href;
+  }
+  if (tag === 'FORM') {
+    const action = (el as HTMLFormElement).action;
+    if (action) return action;
+  }
+  if (tag === 'AREA') {
+    const href = el.getAttribute('href');
+    if (href) return href;
+  }
+  return '';
+}
+
+/**
+ * Format one role-bearing element into a line entry.
+ * Called only for elements with a semantic role (hasRole === true).
+ */
+function formatElement(
+  el: Element,
+  depth: number,
+  roleDisplay: string,
+): LineEntry | null {
+  const name = getAccessibleName(el, roleDisplay);
+  const value = getValue(el);
+  const states = getStates(el);
+  const target = getTarget(el);
+
+  // Format: [role] "name" [| value="..."] [| states] [ → target]
+  const indent = '  '.repeat(depth);
+  let line = `${indent}[${roleDisplay}] "${name}"`;
+  if (value) line += ` | value="${value}"`;
+  if (states) line += ` | ${states}`;
+  if (target) line += ` → ${target}`;
+
+  return { text: line, depth, role: roleDisplay };
+}
+
+// ---------------------------------------------------------------------------
+// Tree construction
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk a single element node and collect its line entry + children.
+ *
+ * Nesting rule: non-role elements (div, span, label, p, etc.) act as
+ * transparent wrappers — they do NOT add a nesting level. Their children
+ * are processed at the same depth, so the output tree reflects real semantic
+ * nesting, not HTML wrapper artifacts.
+ */
+function processElement(el: Element, depth: number, lines: LineEntry[]): void {
+  if (shouldSkipElement(el)) return;
+
+  const roleDisplay = getRoleDisplay(el);
+  const hasRole = roleDisplay !== '';
+
+  // Only emit a formatted line if the element has a semantic role
+  if (hasRole) {
+    const entry = formatElement(el, depth, roleDisplay);
+    if (entry) lines.push(entry);
+  }
+
+  // Non-role elements are transparent wrappers — children share their depth
+  const childDepth = hasRole ? depth + 1 : depth;
+
+  // Walk child nodes
+  const children = el.childNodes;
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+
+    if (child.nodeType === Node.ELEMENT_NODE) {
+      processElement(child as Element, childDepth, lines);
+    } else if (child.nodeType === Node.TEXT_NODE) {
+      // Only emit text nodes for elements WITHOUT roles.
+      // Elements with roles already capture text content via accessible name.
+      if (!hasRole) {
+        const rawText = child.textContent ?? '';
+        const text = rawText.trim();
+        if (text) {
+          lines.push({
+            text: '  '.repeat(childDepth) + text,
+            depth: childDepth,
+            role: 'text',
+          });
+        }
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Truncation
+// ---------------------------------------------------------------------------
+
+/**
+ * Truncate the line list when it exceeds maxChars.
+ *
+ * Strategy per TO-DEV §2 (Token-budget guard §3.4):
+ *   Keep first KEEP_DEPTH levels fully, then summarize deeper elements as:
+ *     "… N more children (role=...)"
+ *
+ * Rule: never silently drop interactive elements in top KEEP_DEPTH levels.
+ * (Since all top-KEEP_DEPTH lines are kept, this is satisfied by design.)
+ */
+function truncateLines(lines: LineEntry[], maxChars: number): string {
+  if (lines.length === 0) return '';
+
+  // Full output — no truncation needed
+  const fullText = lines.map((l) => l.text).join('\n');
+  if (fullText.length <= maxChars) return fullText;
+
+  // Truncation needed: keep depth < KEEP_DEPTH, summarize the rest
+  const kept: LineEntry[] = [];
+  const deep: LineEntry[] = [];
+
+  for (const l of lines) {
+    if (l.depth < KEEP_DEPTH) {
+      kept.push(l);
+    } else {
+      deep.push(l);
+    }
+  }
+
+  // Count roles for the summary
+  const roleCount = new Map<string, number>();
+  for (const l of deep) {
+    const r = l.role || 'element';
+    roleCount.set(r, (roleCount.get(r) ?? 0) + 1);
+  }
+
+  // Find the most common role(s) for the summary
+  const sorted = [...roleCount.entries()].sort((a, b) => b[1] - a[1]);
+  const topRoles = sorted.slice(0, 3);
+
+  let summary: string;
+  if (topRoles.length === 1) {
+    summary = `… ${deep.length} more children (${topRoles[0][0]})`;
+  } else {
+    const list = topRoles.map(([r, c]) => `${r}=${c}`).join(', ');
+    summary = `… ${deep.length} more children (${list})`;
+  }
+
+  const keptText = kept.map((l) => l.text).join('\n');
+  return `${keptText}\n  ${summary}`;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract page structure from a given root element.
+ * Pure function — no DOM mutation, no global references beyond the passed root.
+ *
+ * @param root  - Root element (e.g. document.body, or a test fixture container)
+ * @param maxChars - Maximum output character length before truncation (default 1500)
+ * @returns Compact indented text tree describing the page structure
+ */
+export function extractPageStructureFromRoot(
+  root: HTMLElement,
+  maxChars: number = DEFAULT_MAX_CHARS,
+): string {
+  const lines: LineEntry[] = [];
+
+  for (let i = 0; i < root.childNodes.length; i++) {
+    const child = root.childNodes[i];
+
+    if (child.nodeType === Node.ELEMENT_NODE) {
+      processElement(child as Element, 0, lines);
+    } else if (child.nodeType === Node.TEXT_NODE) {
+      const text = child.textContent?.trim();
+      if (text) {
+        lines.push({ text, depth: 0, role: 'text' });
+      }
+    }
+  }
+
+  return truncateLines(lines, maxChars);
+}
+
+/**
+ * Extract page structure from the current document body.
+ * Thin wrapper over `extractPageStructureFromRoot(document.body)`.
+ *
+ * @returns Compact indented text tree for the current page
+ */
+export function extractPageStructure(): string {
+  if (!document?.body) return '';
+  return extractPageStructureFromRoot(document.body);
 }
