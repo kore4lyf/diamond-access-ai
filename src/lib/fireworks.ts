@@ -1,7 +1,260 @@
-// TODO(Phase C): implement callLLM()
-export function callLLM(
-  _systemPrompt: string,
-  _userMessage: string,
+/**
+ * Diamond Access AI — Fireworks API Client
+ *
+ * Phase C: Real Fireworks API client replacing the callLLM() stub.
+ * Diamond's brain — every command eventually routes through here.
+ *
+ * Two-tier model ADR:
+ *   Dev/MVP: MiniMax M3 (serverless on AMD MI300X via Fireworks)
+ *   Production: Gemma 4 31B IT (self-hosted on AMD GPU — NOT our concern here)
+ *
+ * Architecture (§2 of DOC-FIREWORKS-INTEGRATION):
+ *   callLLMCore()       — pure function, no chrome.*, unit-testable with mocked fetch
+ *   callLLM()           — wrapper reading key+model from chrome.storage.local
+ *   callLLMWithRetry()  — retry + JSON re-prompt wrapper
+ *   callVLM()           — stub for Phase E (multimodal)
+ *
+ * Guardrails:
+ *   - Dev model ONLY: accounts/fireworks/models/minimax-m3
+ *   - No Gemma references in code, comments, tests, or defaults
+ *   - No secrets hardcoded — API key from chrome.storage.local at runtime
+ *   - No DOM access, no chrome.* in callLLMCore
+ *   - Response shape validated with runtime checks (strict-mode safe)
+ */
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/** Fireworks chat completions endpoint (OpenAI-compatible). */
+export const FIREWORKS_URL =
+  'https://api.fireworks.ai/inference/v1/chat/completions';
+
+/**
+ * Dev/MVP model ID — the ONLY model we call during development.
+ * MiniMax M3, serverless on AMD MI300X via Fireworks.
+ *
+ * HARD RULE: Do NOT reference, default to, or "test just to see" the
+ * production Gemma model. The runtime swap is a production release
+ * operation, not a dev toggle.
+ */
+export const DEV_MODEL_ID = 'accounts/fireworks/models/minimax-m3';
+
+// ---------------------------------------------------------------------------
+// Response validation (strict-mode safe)
+// ---------------------------------------------------------------------------
+
+/**
+ * Attempt to extract `choices[0].message.content` as a string from an
+ * unknown-shaped Fireworks API response. Returns null on any shape mismatch.
+ */
+function extractContent(data: unknown): string | null {
+  if (data === null || typeof data !== 'object') return null;
+
+  const root = data as Record<string, unknown>;
+  if (!Array.isArray(root.choices)) return null;
+
+  const choice = root.choices[0];
+  if (choice === null || typeof choice !== 'object') return null;
+
+  const choiceObj = choice as Record<string, unknown>;
+  if (choiceObj.message === null || typeof choiceObj.message !== 'object')
+    return null;
+
+  const content = (choiceObj.message as Record<string, unknown>).content;
+  return typeof content === 'string' ? content : null;
+}
+
+// ---------------------------------------------------------------------------
+// Core — pure function, no chrome.* references
+// ---------------------------------------------------------------------------
+
+/**
+ * Call Fireworks chat completions API with explicit parameters.
+ * Pure function — injectable fetchImpl enables unit testing without network.
+ *
+ * @param systemPrompt - System-level instruction for the model
+ * @param userMessage  - User message / current command
+ * @param apiKey       - Fireworks API key (bearer token)
+ * @param model        - Model ID to use (e.g. DEV_MODEL_ID)
+ * @param fetchImpl    - fetch implementation (inject mock in tests, real in SW)
+ * @returns The model's response text
+ * @throws Error with user-facing message on HTTP/parse failures
+ */
+export async function callLLMCore(
+  systemPrompt: string,
+  userMessage: string,
+  apiKey: string,
+  model: string,
+  fetchImpl: typeof fetch,
 ): Promise<string> {
-  throw new Error('Not implemented — Phase C');
+  const response = await fetchImpl(FIREWORKS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1024,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Fireworks API error ${response.status}: ${body}`);
+  }
+
+  const data: unknown = await response.json();
+  const content = extractContent(data);
+
+  if (content === null) {
+    throw new Error('Malformed Fireworks response');
+  }
+
+  return content;
+}
+
+// ---------------------------------------------------------------------------
+// Wrapper — reads key + model from chrome.storage.local
+// ---------------------------------------------------------------------------
+
+/**
+ * Call Fireworks chat completions, reading API key and model override from
+ * chrome.storage.local. Intended for the service worker — NOT unit-tested
+ * (touches chrome.*).
+ *
+ * Model resolution order:
+ *   1. Explicit `model` parameter
+ *   2. `chrome.storage.local.get('diamond_model')` (production swap key)
+ *   3. Hard default → DEV_MODEL_ID (MiniMax M3)
+ *
+ * @param systemPrompt - System-level instruction
+ * @param userMessage  - User message / command
+ * @param model        - Optional model override
+ * @returns The model's response text
+ * @throws Error("API key not configured. Open extension settings.") if missing
+ */
+export async function callLLM(
+  systemPrompt: string,
+  userMessage: string,
+  model?: string,
+): Promise<string> {
+  const result = await chrome.storage.local.get([
+    'diamond_api_key',
+    'diamond_model',
+  ]);
+
+  const apiKey = result.diamond_api_key as string | undefined;
+  if (!apiKey) {
+    throw new Error('API key not configured. Open extension settings.');
+  }
+
+  const selectedModel =
+    model ?? (result.diamond_model as string | undefined) ?? DEV_MODEL_ID;
+
+  return callLLMCore(
+    systemPrompt,
+    userMessage,
+    apiKey,
+    selectedModel,
+    globalThis.fetch,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Retry + JSON re-prompt wrapper
+// ---------------------------------------------------------------------------
+
+/**
+ * Call Fireworks with retry and JSON response validation.
+ *
+ * Strategy:
+ *   1. Attempt → callLLM → tryParseJSON
+ *   2. If JSON parse fails AND retries remain: re-prompt describing the error
+ *   3. If callLLM throws (network/HTTP): wait 1000ms, retry once
+ *   4. After exhaustion: throw Error("Fireworks API call failed")
+ *
+ * No model fallback. If MiniMax M3 is down, Diamond says unavailable.
+ *
+ * @param systemPrompt - System-level instruction
+ * @param userMessage  - User message / command
+ * @param retries      - Number of retries (default 1, so up to 2 total attempts)
+ * @returns Validated JSON string or raw text on last attempt
+ */
+export async function callLLMWithRetry(
+  systemPrompt: string,
+  userMessage: string,
+  retries = 1,
+): Promise<string> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const raw = await callLLM(systemPrompt, userMessage);
+      const parsed = tryParseJSON(raw);
+
+      if (parsed) {
+        // Valid JSON — return as stringified JSON for structured consumption
+        return JSON.stringify(parsed);
+      }
+
+      // Not valid JSON — re-prompt if retries remain
+      if (attempt < retries) {
+        userMessage = `${raw} — this is not valid JSON. Please respond with only a JSON object matching the schema.`;
+        continue;
+      }
+
+      // Last attempt — return raw text as-is (spoken fallback)
+      return raw;
+    } catch {
+      if (attempt === retries) {
+        throw new Error('Fireworks API call failed');
+      }
+
+      // Wait 1 second before retrying on HTTP/network failure
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+
+  // TypeScript exhaustiveness guard — should never reach here
+  throw new Error('Fireworks API call failed');
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Attempt to parse a string as JSON. Returns the parsed object on success,
+ * null on failure. Only attempts parse if the trimmed input starts with '{'.
+ *
+ * @param text - Raw response text
+ * @returns Parsed object, or null if parsing fails
+ */
+export function tryParseJSON(text: string): object | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return null;
+
+  try {
+    return JSON.parse(trimmed) as object;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// VLM stub — Phase E
+// ---------------------------------------------------------------------------
+
+/**
+ * Multimodal (VLM) call — screenshot analysis.
+ * NOT implemented until Phase E.
+ *
+ * @throws Error('Not implemented — Phase E')
+ */
+export function callVLM(..._args: unknown[]): Promise<string> {
+  throw new Error('Not implemented — Phase E');
 }
