@@ -119,60 +119,12 @@
       Get a key at <a href="https://fireworks.ai/" target="_blank" rel="noopener">fireworks.ai</a>.
     </div>
 
-    <script>
-      // Diamond Access AI — Options Page (Phase A + Phase I gap-fix)
-      //
-      // The previous options.ts used defineUnlistedScript, which leaves the
-      // page undeclared in manifest.json. That meant Chrome never surfaced
-      // it in the right-click menu. This inline script runs inside the
-      // proper options.html page now declared via manifest.options_ui.
-
-      (function init() {
-        const input = document.getElementById('api-key-input');
-        const saveBtn = document.getElementById('save-btn');
-        const status = document.getElementById('status');
-
-        function setStatus(text, kind) {
-          status.textContent = text;
-          status.className = 'status' + (kind ? ' ' + kind : '');
-        }
-
-        // Load existing key on mount
-        if (chrome.storage && chrome.storage.local) {
-          chrome.storage.local.get('diamond_api_key').then(function (result) {
-            const savedKey = result && result.diamond_api_key;
-            if (typeof savedKey === 'string' && savedKey.length > 0) {
-              input.value = savedKey;
-              setStatus('API key loaded from local storage.', '');
-            }
-          }).catch(function () {
-            // Storage not available yet — fine, just don't pre-fill.
-          });
-        }
-
-        // Save on button click
-        saveBtn.addEventListener('click', async function () {
-          const key = (input.value || '').trim();
-          if (!key) {
-            setStatus('Please enter a valid API key.', 'err');
-            return;
-          }
-          try {
-            await chrome.storage.local.set({ diamond_api_key: key });
-            setStatus('API key saved!', 'ok');
-          } catch (e) {
-            setStatus('Could not save (storage unavailable): ' + e.message, 'err');
-          }
-        });
-
-        // Save on Enter inside the input
-        input.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            saveBtn.click();
-          }
-        });
-      })();
-    </script>
+    <!--
+      MV3 CSP is `script-src 'self'` — inline scripts are blocked unless
+      the manifest allows `'unsafe-inline'` or pins the script's sha256.
+      External scripts served from the extension's own origin are allowed.
+      See public/options-page.js for the form logic.
+    -->
+    <script src="./options-page.js"></script>
   </body>
 </html>
