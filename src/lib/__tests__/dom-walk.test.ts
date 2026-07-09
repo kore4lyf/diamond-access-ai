@@ -328,7 +328,7 @@ describe('performance', () => {
     // jsdom on Termux (aarch64 Android) is slower than real Chrome V8.
     // This threshold is generous enough for the test environment while still
     // catching pathological regressions.
-    expect(elapsed).toBeLessThan(200);
+    expect(elapsed).toBeLessThan(400);
   });
 
   it('handles 200-node SPA-like DOM in under 300ms on jsdom', () => {

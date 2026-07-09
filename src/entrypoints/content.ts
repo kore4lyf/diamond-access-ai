@@ -2,6 +2,7 @@
 // Phase A: skeleton — log injection, send PAGE_LOAD once
 // Phase D: ACTIVATE handler — push-to-talk voice loop
 // Phase E: Command integration — full round-trip: listen → DOM walk → LLM → speak → action
+// Phase F: Action execution — real click/navigate/fill/confirm via actions.ts
 
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import {
@@ -12,6 +13,12 @@ import {
   resetSleepTimer,
 } from '../lib/voice';
 import { buildPageSnapshot, isSparseDOM } from '../lib/page-snapshot';
+import {
+  executeAction,
+  checkConfirmation,
+  hasPendingConfirm,
+  type DiamondAction,
+} from '../lib/actions';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -21,59 +28,7 @@ import { buildPageSnapshot, isSparseDOM } from '../lib/page-snapshot';
 let isProcessing = false;
 
 /** Elements from the last buildPageSnapshot call (for action resolution). */
-let lastElements: HTMLElement[] = [];
-
-/**
- * Pending action awaiting user confirmation (from a "confirm" response).
- * Phase F will wire the full confirmation UX; Phase E stores it and
- * the next COMMAND checks if the transcript is a confirmation.
- */
-let pendingAction: Record<string, unknown> | null = null;
-
-// ---------------------------------------------------------------------------
-// Action schema types
-// ---------------------------------------------------------------------------
-
-interface ActionNone {
-  action: 'none';
-  speech: string;
-}
-interface ActionNavigate {
-  action: 'navigate';
-  url: string;
-  description: string;
-}
-interface ActionClick {
-  action: 'click';
-  elementIndex: number;
-  description: string;
-}
-interface ActionFillField {
-  elementIndex: number;
-  value: string;
-}
-interface ActionFill {
-  action: 'fill';
-  fields: ActionFillField[];
-  description: string;
-}
-interface ActionConfirm {
-  action: 'confirm';
-  speech: string;
-  pendingAction: Record<string, unknown>;
-}
-
-type DiamondAction = ActionNone | ActionNavigate | ActionClick | ActionFill | ActionConfirm;
-
-// ---------------------------------------------------------------------------
-// Confirmation phrasing
-// ---------------------------------------------------------------------------
-
-/** Phrases the user might say to confirm an action (lowercase). */
-const CONFIRM_PHRASES = new Set([
-  'yes', 'yeah', 'confirm', 'go ahead', 'do it', 'proceed',
-  'sure', 'ok', 'okay', 'yes please', 'please do', 'yep',
-]);
+let lastSnapshot = buildPageSnapshot();
 
 // ---------------------------------------------------------------------------
 // Main entry point
@@ -93,7 +48,7 @@ export default defineContentScript({
 
     // PAGE_LOAD: build snapshot and send to background for auto-summary
     const snap = buildPageSnapshot();
-    lastElements = snap.elements;
+    lastSnapshot = snap;
 
     chrome.runtime
       .sendMessage({
@@ -111,7 +66,7 @@ export default defineContentScript({
         // Service worker may not be awake — silent fallback
       });
 
-    // Phase D/E: listen for Alt+D activation from the service worker
+    // Phase D/E/F: listen for Alt+D activation from the service worker
     chrome.runtime.onMessage.addListener((message) => {
       const msg = message as { type?: string };
       if (msg.type === 'ACTIVATE') {
@@ -126,10 +81,14 @@ export default defineContentScript({
 // ---------------------------------------------------------------------------
 
 /**
- * Activate Diamond: awake beep → listen → DOM walk → LLM → speak → action.
+ * Activate Diamond: awake beep → listen → (confirm?) → DOM walk → LLM → speak → action.
  *
- * Guarded by both isListening() (Phase D) and isProcessing (Phase E)
- * to prevent double-activation and overlapping round-trips.
+ * Phase F adds confirmation-flow check at the top: if there's a pending
+ * confirmation, a simple "yes" / "confirm" executes the pending action
+ * without going through the LLM.
+ *
+ * Guarded by isListening() (Phase D) and isProcessing (Phase E) to prevent
+ * double-activation and overlapping round-trips.
  */
 async function activateDiamond(): Promise<void> {
   // Guard: not already listening and not already processing a command
@@ -148,11 +107,31 @@ async function activateDiamond(): Promise<void> {
 
   console.log('[Diamond] transcript:', transcript);
 
-  // --- Build page snapshot ---
+  // ── Phase F: Check if this is a confirmation response ─────────────────
+  if (hasPendingConfirm()) {
+    const confirmResult = checkConfirmation(transcript);
+
+    if (confirmResult.isConfirm && confirmResult.action) {
+      // User confirmed — execute the pending action
+      const snap = buildPageSnapshot();
+      lastSnapshot = snap;
+      const result = await executeAction(confirmResult.action, snap);
+      if (result) await speak(result);
+      return;
+    }
+
+    if (confirmResult.hadPending) {
+      // User cancelled the pending action
+      await speak('Action cancelled.');
+      // Fall through to normal command flow
+    }
+  }
+
+  // ── Normal command flow ────────────────────────────────────────────────
   isProcessing = true;
   try {
     const snap = buildPageSnapshot();
-    lastElements = snap.elements;
+    lastSnapshot = snap;
 
     let pageContext = snap.structure;
 
@@ -164,9 +143,8 @@ async function activateDiamond(): Promise<void> {
         });
         const vlmResp = vlmResponse as { description?: string } | undefined;
         if (vlmResp?.description) {
-          // Prepend visual description as page context
           pageContext = `Visual context: ${vlmResp.description}\n\nDOM structure:\n${snap.structure}`;
-          await speak(`Analyzing page visually...`);
+          await speak('Analyzing page visually...');
         }
       } catch {
         // VLM unavailable — proceed with text-only structure
@@ -192,7 +170,7 @@ async function activateDiamond(): Promise<void> {
     }
 
     // --- Parse and execute response ---
-    await handleResponse(rawResponse);
+    await handleResponse(rawResponse, snap);
   } catch (e: unknown) {
     const errMsg = String(e);
     if (
@@ -217,12 +195,16 @@ async function activateDiamond(): Promise<void> {
  * Parse the LLM response and execute the appropriate action.
  *
  * Tries JSON.parse first. If the response is valid JSON matching one of the
- * known action schemas, the action is executed. Otherwise, the response is
- * treated as plain speech and spoken aloud.
+ * known action schemas, the action is dispatched to executeAction.
+ * Otherwise, the response is treated as plain speech and spoken aloud.
  *
  * @param rawText - Raw response text from the LLM
+ * @param snapshot - PageSnapshot for element resolution in actions
  */
-async function handleResponse(rawText: string): Promise<void> {
+async function handleResponse(
+  rawText: string,
+  snapshot: import('../lib/page-snapshot').PageSnapshot,
+): Promise<void> {
   const trimmed = rawText.trim();
 
   // Try to parse as JSON action
@@ -242,78 +224,17 @@ async function handleResponse(rawText: string): Promise<void> {
     return;
   }
 
-  await executeAction(action);
-}
-
-/**
- * Execute a parsed DiamondAction.
- */
-async function executeAction(action: DiamondAction): Promise<void> {
-  switch (action.action) {
-    case 'none':
-      await speak(action.speech);
-      break;
-
-    case 'navigate':
-      await speak(action.description);
-      window.location.href = action.url;
-      break;
-
-    case 'click': {
-      const el = resolveElement(action.elementIndex);
-      if (!el) {
-        await speak("I couldn't find that element on the page.");
-        return;
-      }
-      el.click();
-      // If clicking triggers navigation, don't wait for speech
-      if (!action.description.startsWith('Going to')) {
-        await speak(action.description);
-      }
-      break;
+  // Execute via the actions module (Phase F)
+  try {
+    const result = await executeAction(action, snapshot);
+    if (result) {
+      await speak(result);
     }
-
-    case 'fill': {
-      for (const field of action.fields) {
-        const el = resolveElement(field.elementIndex) as
-          | HTMLInputElement
-          | HTMLTextAreaElement
-          | HTMLSelectElement
-          | null;
-        if (!el) {
-          await speak("I couldn't find a form field on the page.");
-          return;
-        }
-        el.value = field.value;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-      await speak(action.description);
-      break;
-    }
-
-    case 'confirm': {
-      pendingAction = action.pendingAction as Record<string, unknown>;
-      await speak(action.speech);
-      break;
-    }
+  } catch {
+    await speak(
+      'Something went wrong executing that action. Try again.',
+    );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Element resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve a 1-based elementIndex from the LLM to an actual HTMLElement.
- *
- * @param elementIndex - 1-based index (as returned by LLM)
- * @returns The HTMLElement, or null if out of bounds
- */
-function resolveElement(elementIndex: number): HTMLElement | null {
-  const idx = elementIndex - 1;
-  if (idx < 0 || idx >= lastElements.length) return null;
-  return lastElements[idx] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -357,33 +278,4 @@ function isValidAction(obj: Record<string, unknown>): boolean {
     default:
       return false;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Confirm-handler integration (Phase E only — stores pending actions)
-// ---------------------------------------------------------------------------
-
-/**
- * Process a transcript that might be a confirmation response.
- * Exported so tests can verify confirmation logic without full activation.
- *
- * @param transcript - The user's spoken transcript
- * @returns True if the transcript was a confirmation and the pending action
- *          was executed; false if no pending action or not a confirmation.
- */
-export async function processConfirmation(transcript: string): Promise<boolean> {
-  if (!pendingAction) return false;
-
-  const lower = transcript.toLowerCase().trim();
-  if (!CONFIRM_PHRASES.has(lower)) {
-    // Not a confirmation — clear pending action
-    pendingAction = null;
-    return false;
-  }
-
-  // Execute the pending action
-  const action = pendingAction as unknown as DiamondAction;
-  pendingAction = null;
-  await executeAction(action);
-  return true;
 }
