@@ -172,7 +172,7 @@ describe('navigateAction', () => {
 
   it('javascript: URLs are refused', () => {
     const result = navigateAction('javascript:alert("xss")');
-    expect(result).toContain('security reasons');
+    expect(result).toContain("can't navigate to that type of URL");
   });
 
   it('resolves relative URLs against origin', () => {
@@ -760,7 +760,7 @@ describe('error paths', () => {
 
   it('navigateAction with javascript: URL returns security error', () => {
     const result = navigateAction('javascript:void(0)');
-    expect(result).toContain('security reasons');
+    expect(result).toContain("can't navigate to that type of URL");
   });
 
   it('selectOption without match returns specific error', () => {

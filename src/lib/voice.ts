@@ -26,6 +26,8 @@
  *   - Sleep timeout 60s — any voice activity resets it
  */
 
+import { ERRORS } from './errors';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -242,23 +244,19 @@ export function startListening(): Promise<string> {
       const error = event.error;
 
       if (error === 'network') {
-        speak(
-          "I can't hear you right now — check your connection.",
-        );
+        speak(ERRORS.STT_NETWORK);
       } else if (
         error === 'not-allowed' ||
         error === 'service-not-allowed'
       ) {
-        speak(
-          'Microphone access is blocked. Please allow mic permissions.',
-        );
+        speak(ERRORS.MIC_BLOCKED);
       } else if (error === 'no-speech') {
         // Silent — resolve with empty transcript
         cleanup(false);
         resolve('');
         return;
       } else {
-        speak("I didn't catch that. Try again.");
+        speak(ERRORS.STT_OTHER);
       }
 
       cleanup(false);

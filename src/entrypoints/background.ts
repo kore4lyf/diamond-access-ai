@@ -19,6 +19,7 @@ import {
   handleClearCommand,
   handleWhereWasI,
 } from '../lib/storage';
+import { ERRORS } from '../lib/errors';
 
 export default defineBackground(() => {
   console.log('Diamond Access AI service worker started');
@@ -126,7 +127,7 @@ async function handleCommand(
 
     if (!transcript || !pageStructure) {
       sendResponse({
-        text: "I couldn't process that command. Please try again.",
+        text: ERRORS.EMPTY_RESPONSE,
       });
       return;
     }
@@ -158,7 +159,9 @@ async function handleCommand(
     });
 
     // ── Call LLM ─────────────────────────────────────────────────────────
+    console.time('diamond-background-llm');
     const responseText = await callLLMWithRetry(SYSTEM_PROMPT, userMessage);
+    console.timeEnd('diamond-background-llm');
 
     // ── Phase G: Update session ─────────────────────────────────────────
     const newGoal = detectGoal(transcript);
@@ -178,7 +181,7 @@ async function handleCommand(
   } catch (e: unknown) {
     console.error('[background] COMMAND error:', e);
     sendResponse({
-      text: 'The AI service is temporarily unavailable. Please try again.',
+      text: ERRORS.AI_UNAVAILABLE,
     });
   }
 }
@@ -242,7 +245,7 @@ async function handleVlmRequest(
   } catch (e: unknown) {
     console.error('[background] VLM_REQUEST error:', e);
     sendResponse({
-      description: 'Vision analysis is currently unavailable.',
+      description: ERRORS.AI_UNAVAILABLE,
     });
   }
 }

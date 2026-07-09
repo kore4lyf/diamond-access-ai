@@ -18,6 +18,7 @@
  *   - Sensitive field values are never spoken in full
  */
 
+import { ERRORS } from './errors';
 import type { PageSnapshot } from './page-snapshot';
 
 // ---------------------------------------------------------------------------
@@ -151,7 +152,7 @@ export function clickAction(
 ): string {
   const el = resolveElement(elementIndex, snapshot);
   if (!el) {
-    return "I couldn't find that element on the page. The page may have changed.";
+    return ERRORS.ELEMENT_NOT_FOUND;
   }
 
   el.scrollIntoView?.({ behavior: 'instant', block: 'center' });
@@ -206,13 +207,13 @@ export function clickAction(
 export function navigateAction(url: string): string {
   // Refuse javascript: URLs
   if (url.startsWith('javascript:')) {
-    return "I can't navigate to that type of link for security reasons.";
+    return ERRORS.JS_REFUSED;
   }
 
   // Resolve relative URLs
   const resolved = resolveUrl(url);
   if (!resolved) {
-    return "I couldn't navigate to that page. It may be blocked.";
+    return ERRORS.NAV_FAILED;
   }
 
   const currentOrigin = window.location.origin;
@@ -223,7 +224,7 @@ export function navigateAction(url: string): string {
       window.location.href = resolved;
       return ''; // Navigation will unload the page — no need to speak
     } catch {
-      return "I couldn't navigate to that page. It may be blocked.";
+      return ERRORS.NAV_FAILED;
     }
   }
 
@@ -232,7 +233,7 @@ export function navigateAction(url: string): string {
     window.open(resolved, '_blank');
     return ''; // New tab opened — no need to speak (browser handles it)
   } catch {
-    return "I couldn't navigate to that page. It may be blocked.";
+    return ERRORS.NAV_FAILED;
   }
 }
 
@@ -287,12 +288,12 @@ export async function fillAction(
   for (const field of resolvedFields) {
     const el = resolveElement(field.elementIndex, snapshot);
     if (!el) {
-      return "I couldn't find a field on the page. The page may have changed.";
+      return ERRORS.ELEMENT_NOT_FOUND;
     }
 
     // Check writability
     if (!isWritable(el)) {
-      return "I couldn't fill that field. It may be read-only or disabled.";
+      return ERRORS.FILL_FAILED;
     }
   }
 
@@ -535,28 +536,29 @@ function getSensitiveReadback(
 
     switch (sensitiveType) {
       case 'password':
-        prompts.push('Filling your password');
+        prompts.push(ERRORS.SENSITIVE_CONFIRM('password'));
         break;
       case 'credit-card':
-        prompts.push(`Filling card ending in ${last4}`);
+        prompts.push(ERRORS.SENSITIVE_CC_CONFIRM(last4));
         break;
       case 'ssn':
-        prompts.push(`Filling SSN ending in ${last4}`);
+        prompts.push(ERRORS.SENSITIVE_SSN_CONFIRM(last4));
         break;
       case 'cvv':
-        prompts.push('Filling your security code');
+        prompts.push(ERRORS.SENSITIVE_CONFIRM('security code'));
         break;
       case 'dob':
-        prompts.push(`Filling date of birth ${value}`);
+        prompts.push(ERRORS.SENSITIVE_CONFIRM(`date of birth ${value}`));
         break;
     }
   }
 
   if (prompts.length === 0) return null;
 
-  // Deduplicate similar prompts
+  // Deduplicate similar prompts and join
+  // Each prompt already includes "Say 'confirm' to proceed." from ERRORS constants
   const unique = [...new Set(prompts)];
-  return `${unique.join('. ')}. Say 'confirm' to proceed.`;
+  return unique.join(' ');
 }
 
 // ---------------------------------------------------------------------------

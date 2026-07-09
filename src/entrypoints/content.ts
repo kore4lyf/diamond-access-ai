@@ -19,6 +19,8 @@ import {
   hasPendingConfirm,
   type DiamondAction,
 } from '../lib/actions';
+import { wrapIrreversible } from '../lib/safety-net';
+import { ERRORS } from '../lib/errors';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -94,14 +96,19 @@ async function activateDiamond(): Promise<void> {
   // Guard: not already listening and not already processing a command
   if (isListening() || isProcessing) return;
 
+  console.time('diamond-command');
+
   playBeep('awake');
   resetSleepTimer();
 
+  console.time('diamond-stt');
   const transcript = await startListening();
+  console.timeEnd('diamond-stt');
   resetSleepTimer();
 
   if (!transcript) {
-    await speak("I didn't hear anything.");
+    console.timeEnd('diamond-command');
+    await speak(ERRORS.STT_NO_SPEECH || "I didn't hear anything.");
     return;
   }
 
@@ -122,7 +129,7 @@ async function activateDiamond(): Promise<void> {
 
     if (confirmResult.hadPending) {
       // User cancelled the pending action
-      await speak('Action cancelled.');
+      await speak(ERRORS.ACTION_CANCELLED);
       // Fall through to normal command flow
     }
   }
@@ -133,6 +140,7 @@ async function activateDiamond(): Promise<void> {
     const snap = buildPageSnapshot();
     lastSnapshot = snap;
 
+    console.time('diamond-vlm');
     let pageContext = snap.structure;
 
     // Check if DOM is too sparse — request VLM fallback
@@ -150,14 +158,17 @@ async function activateDiamond(): Promise<void> {
         // VLM unavailable — proceed with text-only structure
       }
     }
+    console.timeEnd('diamond-vlm');
 
     // --- Send COMMAND to service worker ---
+    console.time('diamond-llm');
     const response = await chrome.runtime.sendMessage({
       type: 'COMMAND',
       transcript,
       pageStructure: pageContext,
       url: window.location.href,
     });
+    console.timeEnd('diamond-llm');
 
     const rawResponse =
       typeof response === 'string'
@@ -165,24 +176,28 @@ async function activateDiamond(): Promise<void> {
         : (response as { text?: string })?.text ?? '';
 
     if (!rawResponse) {
-      await speak("I couldn't process that. Please try again.");
+      console.timeEnd('diamond-command');
+      await speak(ERRORS.EMPTY_RESPONSE);
       return;
     }
 
     // --- Parse and execute response ---
+    console.time('diamond-action');
     await handleResponse(rawResponse, snap);
+    console.timeEnd('diamond-action');
   } catch (e: unknown) {
     const errMsg = String(e);
     if (
       errMsg.includes('message channel closed') ||
       errMsg.includes('receiving end does not exist')
     ) {
-      await speak('The AI service is temporarily unavailable.');
+      await speak(ERRORS.SW_TERMINATED);
     } else {
       console.error('[Diamond] command error:', e);
-      await speak('Something went wrong. Please try again.');
+      await speak(ERRORS.AI_UNAVAILABLE);
     }
   } finally {
+    console.timeEnd('diamond-command');
     isProcessing = false;
   }
 }
@@ -221,19 +236,23 @@ async function handleResponse(
   if (!action) {
     // Plain speech response
     await speak(trimmed);
+    console.timeEnd('diamond-action');
+    console.timeEnd('diamond-command');
     return;
   }
 
-  // Execute via the actions module (Phase F)
+  // ── Phase H: Safety net — check for irreversible actions ──────────────
+  const elementText = getElementText(action, snapshot);
+  const safeAction = wrapIrreversible(action, elementText);
+
+  // Execute via the actions module (Phase F/H)
   try {
-    const result = await executeAction(action, snapshot);
+    const result = await executeAction(safeAction, snapshot);
     if (result) {
       await speak(result);
     }
   } catch {
-    await speak(
-      'Something went wrong executing that action. Try again.',
-    );
+    await speak(ERRORS.SOMETHING_WRONG);
   }
 }
 
@@ -278,4 +297,40 @@ function isValidAction(obj: Record<string, unknown>): boolean {
     default:
       return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Safety-net helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the element's text/description from the snapshot for the
+ * safety-net keyword check.
+ *
+ * Tries, in order:
+ *   1. The element's textContent / innerText / aria-label from the snapshot
+ *   2. The action's description field
+ *   3. Empty string (no match possible — passes through safely)
+ */
+function getElementText(
+  action: DiamondAction,
+  snapshot: import('../lib/page-snapshot').PageSnapshot,
+): string {
+  if (action.action === 'click') {
+    const idx = action.elementIndex - 1;
+    const el = snapshot.elements[idx];
+    if (el) {
+      const text =
+        el.textContent?.trim() ||
+        (el as HTMLElement).innerText?.trim() ||
+        el.getAttribute('aria-label') ||
+        '';
+      if (text) return text;
+    }
+
+    // Fallback to the description from the action
+    if (action.description) return action.description;
+  }
+
+  return '';
 }
