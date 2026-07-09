@@ -3,6 +3,7 @@
 // Phase C: Fireworks API client — FIREWORKS_TEST handler
 // Phase D: chrome.commands.onCommand — Alt+D → ACTIVATE to content script
 // Phase E: COMMAND / PAGE_LOAD / VLM_REQUEST handlers, prompt construction
+// Phase G: Session + profile, conversation history, goal detection, profile fills
 
 import { defineBackground } from 'wxt/utils/define-background';
 import { callLLMWithRetry, callVLM } from '../lib/fireworks';
@@ -10,10 +11,27 @@ import {
   SYSTEM_PROMPT,
   PAGE_LOAD_PROMPT_TEMPLATE,
   VLM_SYSTEM_PROMPT,
+  buildCommandPrompt,
 } from '../lib/prompts';
+import {
+  storage,
+  detectGoal,
+  handleClearCommand,
+  handleWhereWasI,
+} from '../lib/storage';
 
 export default defineBackground(() => {
   console.log('Diamond Access AI service worker started');
+
+  // Phase G: Clear session on browser restart (profile is NOT cleared)
+  chrome.runtime.onStartup.addListener(async () => {
+    console.log('[background] browser startup — clearing session, preserving profile');
+    try {
+      await storage.clearSession();
+    } catch {
+      // Gracefully handle if storage isn't available
+    }
+  });
 
   // Phase D: Alt+D keyboard shortcut → tell the content script to wake up
   chrome.commands.onCommand.addListener(async (command) => {
@@ -46,7 +64,7 @@ export default defineBackground(() => {
       // ── COMMAND: full user command round-trip ───────────────────────────
       if (msg.type === 'COMMAND') {
         handleCommand(msg, sendResponse);
-        return true; // keep channel open for async response
+        return true;
       }
 
       // ── PAGE_LOAD: auto-summarize on navigation ─────────────────────────
@@ -63,8 +81,6 @@ export default defineBackground(() => {
 
       // ── FIREWORKS_TEST: diagnostics — Phase C, kept for options page ────
       if (msg.type === 'FIREWORKS_TEST') {
-        // Phase C test handler — uses callLLM through callLLMWithRetry
-        // (for diagnostics only; COMMAND handler uses the same pipeline)
         handleFireworksTest(msg, sendResponse);
         return true;
       }
@@ -85,15 +101,19 @@ export default defineBackground(() => {
 // ---------------------------------------------------------------------------
 
 /**
- * COMMAND: Full user command round-trip.
+ * COMMAND: Full user command round-trip with conversation context.
  *
- * Receives { transcript, pageStructure, url } from the content script,
- * builds a single-turn prompt (system prompt + page structure + transcript),
- * calls callLLMWithRetry, and returns the raw response text.
+ * Phase E: Single-turn prompt (system + page structure + transcript).
+ * Phase G: Loads session, detects goals, builds context prompt, appends turn.
  *
- * @remarks
- * Single-turn only — no conversation history in Phase E.
- * Phase G will add storage.ts + history wrapping.
+ * Flow:
+ *   1. Load session from storage
+ *   2. Check for "clear context" / "where was I?" commands (handled before LLM)
+ *   3. Build multi-layer prompt with history + goal
+ *   4. Call LLM
+ *   5. Detect if a new goal was set and update session
+ *   6. Append turn to conversation history
+ *   7. Return response
  */
 async function handleCommand(
   msg: Record<string, unknown>,
@@ -111,20 +131,50 @@ async function handleCommand(
       return;
     }
 
-    // Build a single-turn prompt
-    const userMessage = [
-      'PAGE STRUCTURE:',
-      pageStructure,
-      '',
-      'URL:',
-      url ?? 'unknown',
-      '',
-      'USER COMMAND:',
-      transcript,
-    ].join('\n');
+    // ── Phase G: Load session ────────────────────────────────────────────
+    const session = await storage.getSession();
 
-    const response = await callLLMWithRetry(SYSTEM_PROMPT, userMessage);
-    sendResponse({ text: response });
+    // ── Handle "clear context" ───────────────────────────────────────────
+    const clearResponse = await handleClearCommand(transcript, storage);
+    if (clearResponse) {
+      sendResponse({ text: clearResponse });
+      return;
+    }
+
+    // ── Handle "where was I?" ────────────────────────────────────────────
+    const whereResponse = handleWhereWasI(transcript, session);
+    if (whereResponse) {
+      sendResponse({ text: whereResponse });
+      return;
+    }
+
+    // ── Build context prompt ────────────────────────────────────────────
+    const userMessage = buildCommandPrompt({
+      systemPrompt: SYSTEM_PROMPT,
+      pageStructure,
+      transcript,
+      session,
+      url,
+    });
+
+    // ── Call LLM ─────────────────────────────────────────────────────────
+    const responseText = await callLLMWithRetry(SYSTEM_PROMPT, userMessage);
+
+    // ── Phase G: Update session ─────────────────────────────────────────
+    const newGoal = detectGoal(transcript);
+
+    if (newGoal) {
+      // Set the new active goal
+      session.activeGoal = newGoal;
+    }
+
+    // Append the turn to conversation history
+    await storage.appendTurn({
+      user: transcript,
+      assistant: responseText,
+    });
+
+    sendResponse({ text: responseText });
   } catch (e: unknown) {
     console.error('[background] COMMAND error:', e);
     sendResponse({

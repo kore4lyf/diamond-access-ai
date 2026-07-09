@@ -280,8 +280,11 @@ export async function fillAction(
   snapshot: PageSnapshot,
   description: string,
 ): Promise<string> {
+  // ── Phase G: Resolve profile-based fill values (profile: sentinel) ────
+  const resolvedFields = await resolveProfileFields(fields);
+
   // ── Pass 1: validate all elements exist ────────────────────────────────
-  for (const field of fields) {
+  for (const field of resolvedFields) {
     const el = resolveElement(field.elementIndex, snapshot);
     if (!el) {
       return "I couldn't find a field on the page. The page may have changed.";
@@ -294,19 +297,19 @@ export async function fillAction(
   }
 
   // ── Pass 2: detect sensitive fields and require confirmation ────────────
-  const sensitiveText = getSensitiveReadback(fields, snapshot);
+  const sensitiveText = getSensitiveReadback(resolvedFields, snapshot);
   if (sensitiveText) {
-    // Store the full fill action as pending confirmation
+    // Store the RESOLVED fill action as pending confirmation
     pendingConfirm = {
       action: 'fill',
-      fields,
+      fields: resolvedFields,
       description,
     };
     return sensitiveText; // e.g., "Filling your password. Say 'confirm' to proceed."
   }
 
   // ── Pass 3: execute the fill ───────────────────────────────────────────
-  applyFill(fields, snapshot);
+  applyFill(resolvedFields, snapshot);
 
   if (description) return description;
   return `Filled ${fields.length} field${fields.length > 1 ? 's' : ''}.`;
@@ -576,6 +579,95 @@ export function confirmAction(
 ): string {
   pendingConfirm = pending;
   return speech;
+}
+
+// ---------------------------------------------------------------------------
+// Profile-based fill resolution
+// ---------------------------------------------------------------------------
+
+/** Prefix for profile-based fill values. */
+const PROFILE_PREFIX = 'profile:';
+
+/**
+ * Resolve profile-based fill values when the LLM returns
+ * `"value": "profile:<field>"` sentinels.
+ *
+ * The LLM never sees the actual profile values — only labels.
+ * Resolution happens client-side via chrome.storage.local.
+ *
+ * Supported patterns:
+ *   profile:email          → UserProfile.email
+ *   profile:phone          → UserProfile.phone
+ *   profile:address:Home   → SavedAddress where label === "Home", lines joined
+ *   profile:link:GitHub    → SavedLink where label === "GitHub", URL
+ *
+ * @param fields - The original fill fields from the LLM
+ * @returns Resolved fields (unchanged if no profile: prefixes)
+ */
+async function resolveProfileFields(fields: FillField[]): Promise<FillField[]> {
+  const hasProfile = fields.some((f) =>
+    typeof f.value === 'string' && f.value.startsWith(PROFILE_PREFIX),
+  );
+
+  if (!hasProfile) return fields;
+
+  // Try to load the profile from chrome.storage.local
+  let profile: {
+    savedAddresses?: Array<{ label: string; lines: string[] }>;
+    savedLinks?: Array<{ label: string; url: string }>;
+    email?: string;
+    phone?: string;
+  } = {};
+
+  try {
+    // Chrome is available in content script context
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      const result = await chrome.storage.local.get('diamond_profile');
+      profile = (result.diamond_profile as typeof profile) ?? {};
+    }
+  } catch {
+    // chrome.storage unavailable — return original fields (LLM values passed through)
+    return fields;
+  }
+
+  return fields.map((f) => {
+    if (typeof f.value !== 'string' || !f.value.startsWith(PROFILE_PREFIX)) {
+      return f;
+    }
+
+    const parts = f.value.slice(PROFILE_PREFIX.length).split(':');
+    const field = parts[0]?.toLowerCase();
+    const label = parts.slice(1).join(':'); // rest is the label
+
+    switch (field) {
+      case 'email':
+        return { ...f, value: profile.email ?? f.value };
+      case 'phone':
+        return { ...f, value: profile.phone ?? f.value };
+      case 'address':
+        if (label && profile.savedAddresses) {
+          const addr = profile.savedAddresses.find(
+            (a: { label: string }) => a.label.toLowerCase() === label.toLowerCase(),
+          );
+          if (addr) {
+            return { ...f, value: addr.lines.join(', ') };
+          }
+        }
+        return f;
+      case 'link':
+        if (label && profile.savedLinks) {
+          const link = profile.savedLinks.find(
+            (l: { label: string }) => l.label.toLowerCase() === label.toLowerCase(),
+          );
+          if (link) {
+            return { ...f, value: link.url };
+          }
+        }
+        return f;
+      default:
+        return f;
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

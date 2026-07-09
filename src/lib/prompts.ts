@@ -67,3 +67,72 @@ export const VLM_SYSTEM_PROMPT = `You are Diamond's vision component. Describe t
 export function buildVlmContextPrompt(description: string): string {
   return `Visual context (screenshot analysis):\n${description}\n\n`;
 }
+
+// ---------------------------------------------------------------------------
+// Context block builder (Phase G)
+// ---------------------------------------------------------------------------
+
+import type { SessionState } from './storage';
+
+/**
+ * Build a multi-layer command prompt incorporating conversation context.
+ *
+ * Layer order per DOC-CONTEXT-MEMORY §3:
+ *   SYSTEM PROMPT
+ *   [ACTIVE GOAL] (if set)
+ *   [CONVERSATION HISTORY] (last MAX_TURNS turns)
+ *   PAGE STRUCTURE
+ *   URL:
+ *   USER COMMAND:
+ *
+ * @remarks
+ * - `formState` values are NEVER included in the prompt (PII guard §6).
+ * - History is defensively sliced to the last 10 turns.
+ * - Empty active goal section is omitted.
+ */
+export function buildCommandPrompt(opts: {
+  systemPrompt: string;
+  pageStructure: string;
+  transcript: string;
+  session: SessionState;
+  url?: string;
+}): string {
+  const parts: string[] = [opts.systemPrompt];
+
+  // Active goal
+  if (opts.session.activeGoal) {
+    parts.push('');
+    parts.push('ACTIVE GOAL:');
+    parts.push(opts.session.activeGoal);
+  }
+
+  // Conversation history (defensively slice to MAX_TURNS)
+  const history = opts.session.conversation.slice(-10);
+  if (history.length > 0) {
+    parts.push('');
+    parts.push('CONVERSATION HISTORY:');
+    for (const turn of history) {
+      parts.push(`User: "${turn.user}"`);
+      parts.push(`Diamond: "${turn.assistant}"`);
+    }
+  }
+
+  // Page structure
+  parts.push('');
+  parts.push('PAGE STRUCTURE:');
+  parts.push(opts.pageStructure);
+
+  // URL
+  if (opts.url) {
+    parts.push('');
+    parts.push('URL:');
+    parts.push(opts.url);
+  }
+
+  // User command
+  parts.push('');
+  parts.push('USER COMMAND:');
+  parts.push(opts.transcript);
+
+  return parts.join('\n');
+}
