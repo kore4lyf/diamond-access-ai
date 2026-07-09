@@ -20,6 +20,7 @@
 
 import { ERRORS } from './errors';
 import type { PageSnapshot } from './page-snapshot';
+import * as logger from './logger';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -73,24 +74,47 @@ export async function executeAction(
   action: DiamondAction,
   snapshot: PageSnapshot,
 ): Promise<string> {
-  switch (action.action) {
-    case 'none':
-      return action.speech;
+  const sw = new logger.Stopwatch('action', 'executeAction');
+  logger.info('action', 'dispatching', {
+    type: action.action,
+    hasElementIndex: 'elementIndex' in action,
+    hasFields: 'fields' in action,
+    hasPending: 'pendingAction' in action,
+  });
+  let result: string;
+  try {
+    switch (action.action) {
+      case 'none':
+        result = action.speech;
+        break;
 
-    case 'navigate':
-      return navigateAction(action.url);
+      case 'navigate':
+        result = navigateAction(action.url);
+        break;
 
-    case 'click':
-      return clickAction(action.elementIndex, snapshot, action.description);
+      case 'click':
+        result = clickAction(action.elementIndex, snapshot, action.description);
+        break;
 
-    case 'fill':
-      return fillAction(action.fields, snapshot, action.description);
+      case 'fill':
+        result = await fillAction(action.fields, snapshot, action.description);
+        break;
 
-    case 'confirm':
-      return confirmAction(action.pendingAction, action.speech);
+      case 'confirm':
+        result = confirmAction(action.pendingAction, action.speech);
+        break;
 
-    default:
-      return 'Something went wrong executing that action. Try again.';
+      default:
+        result = 'Something went wrong executing that action. Try again.';
+    }
+    sw.stop(action.action);
+    return result;
+  } catch (e) {
+    logger.error('action', 'dispatcher threw', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+    sw.stop('error');
+    throw e;
   }
 }
 
@@ -152,8 +176,16 @@ export function clickAction(
 ): string {
   const el = resolveElement(elementIndex, snapshot);
   if (!el) {
+    logger.warn('action', 'click: element not found', { elementIndex });
     return ERRORS.ELEMENT_NOT_FOUND;
   }
+
+  logger.info('action', 'click', {
+    elementIndex,
+    tag: el.tagName,
+    description,
+    role: el.getAttribute('role'),
+  });
 
   el.scrollIntoView?.({ behavior: 'instant', block: 'center' });
 
@@ -205,8 +237,10 @@ export function clickAction(
  * @returns Result string to speak
  */
 export function navigateAction(url: string): string {
+  logger.info('action', 'navigate', { url });
   // Refuse javascript: URLs
   if (url.startsWith('javascript:')) {
+    logger.warn('action', 'javascript URL refused', { url });
     return ERRORS.JS_REFUSED;
   }
 
@@ -284,6 +318,14 @@ export async function fillAction(
   // ── Phase G: Resolve profile-based fill values (profile: sentinel) ────
   const resolvedFields = await resolveProfileFields(fields);
 
+  // Log the fill plan WITHOUT VALUES — privacy contract.
+  // We log only field indices and resolved sensitive-types so debugging is
+  // possible without leaking passwords / card numbers.
+  logger.info('action', 'fill', {
+    fieldCount: resolvedFields.length,
+    indices: resolvedFields.map((f) => f.elementIndex),
+  });
+
   // ── Pass 1: validate all elements exist ────────────────────────────────
   for (const field of resolvedFields) {
     const el = resolveElement(field.elementIndex, snapshot);
@@ -300,6 +342,9 @@ export async function fillAction(
   // ── Pass 2: detect sensitive fields and require confirmation ────────────
   const sensitiveText = getSensitiveReadback(resolvedFields, snapshot);
   if (sensitiveText) {
+    logger.warn('action', 'sensitive field detected — confirmation required', {
+      fieldCount: resolvedFields.length,
+    });
     // Store the RESOLVED fill action as pending confirmation
     pendingConfirm = {
       action: 'fill',

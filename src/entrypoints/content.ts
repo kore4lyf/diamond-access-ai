@@ -25,6 +25,7 @@ import {
 } from '../lib/actions';
 import { wrapIrreversible } from '../lib/safety-net';
 import { ERRORS } from '../lib/errors';
+import * as logger from '../lib/logger';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -65,6 +66,11 @@ export default defineContentScript({
 
     // PAGE_LOAD: build snapshot and send to background for auto-summary
     const snap = buildPageSnapshot();
+    logger.debug('page_load', 'snapshot built', {
+      url,
+      structureLen: snap.structure.length,
+      interactiveCount: snap.elements.length,
+    });
 
     chrome.runtime
       .sendMessage({
@@ -75,6 +81,9 @@ export default defineContentScript({
       .then((response) => {
         const resp = response as { summary?: string } | undefined;
         if (resp?.summary) {
+          logger.info('tts', 'PAGE_LOAD summary spoken', {
+            length: resp.summary.length,
+          });
           speak(resp.summary);
         }
       })
@@ -170,11 +179,15 @@ async function activateDiamond(): Promise<void> {
     // intentionally empty — don't fall back to a spoken message which
     // would defeat the design.
     console.timeEnd('diamond-command');
+    logger.debug('user', 'no transcript (Alt+D released)');
     await speak(ERRORS.STT_NO_SPEECH);
     return;
   }
 
-  console.log('[Diamond] transcript:', transcript);
+  logger.info('user', 'voice transcript', {
+    text: transcript,
+    via: lastActivationSource,
+  });
 
   // ── Phase F: Check if this is a confirmation response ─────────────────
   if (hasPendingConfirm()) {
@@ -194,6 +207,7 @@ async function activateDiamond(): Promise<void> {
 
     if (confirmResult.hadPending) {
       // User cancelled the pending action — fall through to normal flow
+      logger.info('confirm', 'pending action cancelled by user');
       await speak(ERRORS.ACTION_CANCELLED);
     }
   }
@@ -215,6 +229,9 @@ async function activateDiamond(): Promise<void> {
         const vlmResp = vlmResponse as { description?: string } | undefined;
         if (vlmResp?.description) {
           pageContext = `Visual context: ${vlmResp.description}\n\nDOM structure:\n${snap.structure}`;
+          logger.info('vlm', 'sparse DOM triggered VLM fallback', {
+            descriptionLen: vlmResp.description.length,
+          });
           await speak('Analyzing page visually...');
         }
       } catch {
@@ -225,6 +242,11 @@ async function activateDiamond(): Promise<void> {
 
     // --- Send COMMAND to service worker ---
     console.time('diamond-llm');
+    logger.info('command', 'sending COMMAND to SW', {
+      transcriptLen: transcript.length,
+      pageContextLen: pageContext.length,
+      url: window.location.href,
+    });
     const response = await chrome.runtime.sendMessage({
       type: 'COMMAND',
       transcript,
@@ -242,6 +264,7 @@ async function activateDiamond(): Promise<void> {
       // End diamond-command here. This branch returns BEFORE the
       // finally block, so omitting this would leak a "Timer started
       // but never ended" console warning.
+      logger.warn('command', 'SW returned empty response');
       console.timeEnd('diamond-command');
       await speak(ERRORS.EMPTY_RESPONSE);
       return;
@@ -257,9 +280,11 @@ async function activateDiamond(): Promise<void> {
       errMsg.includes('message channel closed') ||
       errMsg.includes('receiving end does not exist')
     ) {
+      logger.warn('command', 'SW terminated mid-round-trip', { errMsg });
       await speak(ERRORS.SW_TERMINATED);
     } else {
       console.error('[Diamond] command error:', e);
+      logger.error('command', 'round-trip failed', { errMsg });
       await speak(ERRORS.AI_UNAVAILABLE);
     }
   } finally {
@@ -304,9 +329,17 @@ async function handleResponse(
     // timer (set by activateDiamond's `console.time('diamond-action')`
     // immediately before calling us), so this branch only needs to
     // return. The activated timer ends cleanly in activateDiamond.
+    logger.info('tts', 'plain speech response', { length: trimmed.length });
     await speak(trimmed);
     return;
   }
+
+  logger.info('action', 'parsed', {
+    type: action.action,
+    hasElementIndex: 'elementIndex' in action,
+    hasFields: 'fields' in action,
+    hasPending: 'pendingAction' in action,
+  });
 
   // ── Phase H: Safety net — check for irreversible actions ──────────────
   const elementText = getElementText(action, snapshot);
@@ -316,9 +349,13 @@ async function handleResponse(
   try {
     const result = await executeAction(safeAction, snapshot);
     if (result) {
+      logger.debug('tts', 'action result spoken', { length: result.length });
       await speak(result);
     }
-  } catch {
+  } catch (e) {
+    logger.error('action', 'executeAction threw', {
+      err: e instanceof Error ? e.message : String(e),
+    });
     await speak(ERRORS.SOMETHING_WRONG);
   }
 }

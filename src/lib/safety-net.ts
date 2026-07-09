@@ -18,6 +18,7 @@
 
 import { ERRORS } from './errors';
 import type { DiamondAction } from './actions';
+import * as logger from './logger';
 
 // ---------------------------------------------------------------------------
 // Irreversible keywords
@@ -75,13 +76,19 @@ export function wrapIrreversible(
 
   // Check if any keyword appears in the element's text (case-insensitive)
   const lowerText = elementText.toLowerCase();
-  const isIrreversible = IRREVERSIBLE_KEYWORDS.some((keyword) =>
+  const matchedKeyword = IRREVERSIBLE_KEYWORDS.find((keyword) =>
     lowerText.includes(keyword),
   );
+  const isIrreversible = !!matchedKeyword;
 
   if (!isIrreversible) {
     return action;
   }
+
+  logger.warn('safety_net', 'irreversible action intercepted', {
+    matchedKeyword,
+    description: action.description ?? elementText ?? '(no text)',
+  });
 
   // Build a description from the action's description or element text
   const description = action.description || elementText || 'perform this action';

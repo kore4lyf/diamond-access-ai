@@ -69,4 +69,62 @@
       saveBtn.click();
     }
   });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Diagnostics panel — pull the service-worker log buffer via
+  // chrome.runtime.sendMessage and render it for inspection.
+  // The buffer is per-script-instance; this only shows the SW buffer
+  // (the most operational one). Content-script logs are viewable in
+  // DevTools on the page itself.
+  // ─────────────────────────────────────────────────────────────────────
+  const refreshLogsBtn = document.getElementById('refresh-logs-btn');
+  const clearLogsBtn = document.getElementById('clear-logs-btn');
+  const logsPre = document.getElementById('logs-pre');
+
+  function formatEntry(e) {
+    const ts = new Date(e.ts || Date.now()).toISOString().slice(11, 23);
+    const lvl = String(e.level || 'INFO').toUpperCase().padEnd(5);
+    const cat = String(e.cat || 'unknown').padEnd(15);
+    const msg = String(e.msg || '');
+    const data =
+      e.data && typeof e.data === 'object' && Object.keys(e.data).length > 0
+        ? ' ' + JSON.stringify(e.data)
+        : '';
+    return ts + ' ' + lvl + ' ' + cat + ' ' + msg + data;
+  }
+
+  if (refreshLogsBtn && logsPre) {
+    refreshLogsBtn.addEventListener('click', async function () {
+      try {
+        const response = await chrome.runtime.sendMessage({ type: 'GET_LOGS' });
+        const entries = (response && response.logs) || [];
+        if (entries.length === 0) {
+          logsPre.textContent = '(no log entries yet — use Diamond first)';
+          return;
+        }
+        const lines = entries.map(formatEntry);
+        logsPre.textContent = lines.join('\n');
+      } catch (err) {
+        logsPre.textContent =
+          'Could not fetch logs: ' +
+          (err && err.message ? err.message : String(err));
+      }
+    });
+  }
+
+  if (clearLogsBtn) {
+    clearLogsBtn.addEventListener('click', async function () {
+      try {
+        await chrome.runtime.sendMessage({ type: 'CLEAR_LOGS' });
+        if (logsPre) logsPre.textContent = '(cleared)';
+        setStatus('Log buffer cleared.', 'ok');
+      } catch (err) {
+        setStatus(
+          'Could not clear logs: ' +
+            (err && err.message ? err.message : String(err)),
+          'err',
+        );
+      }
+    });
+  }
 })();

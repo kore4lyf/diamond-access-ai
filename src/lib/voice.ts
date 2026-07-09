@@ -27,6 +27,7 @@
  */
 
 import { ERRORS } from './errors';
+import * as logger from './logger';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -225,16 +226,25 @@ export function startListening(): Promise<string> {
           .then((available) => {
             if (available === 'available') {
               recognition.processLocally = true;
+              logger.debug('stt', 'on-device STT available');
             }
           })
           .catch(() => {
             // Silently fall back to cloud
+            logger.debug('stt', 'on-device probe failed, cloud fallback');
           });
       }
     }
 
+    const sttSw = new logger.Stopwatch('stt', 'STT recognition');
+
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = event.results[0][0].transcript ?? '';
+      const ms = sttSw.stop();
+      logger.info('stt', 'transcript recognized', {
+        text: transcript,
+        ms,
+      });
       cleanup(true);
       resetSleepTimer();
       resolve(transcript);
@@ -242,6 +252,8 @@ export function startListening(): Promise<string> {
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       const error = event.error;
+      sttSw.stop('error');
+      logger.warn('stt', 'recognition error', { error });
 
       if (error === 'network') {
         speak(ERRORS.STT_NETWORK);
@@ -264,10 +276,15 @@ export function startListening(): Promise<string> {
     };
 
     recognition.onspeechend = () => {
+      logger.debug('stt', 'speech ended, stopping recognition');
       recognition.stop();
     };
 
     recognition.start();
+    logger.info('stt', 'recognition started', {
+      lang: recognition.lang,
+      processLocally: recognition.processLocally,
+    });
   });
 }
 

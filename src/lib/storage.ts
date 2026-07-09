@@ -21,6 +21,7 @@
  */
 
 import { ERRORS } from './errors';
+import * as logger from './logger';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -316,7 +317,11 @@ export function detectGoal(transcript: string): string | null {
       // Normalize to ~10 words
       const words = trimmed.split(/\s+/);
       const normalized = words.slice(0, 12).join(' ');
-      return normalized.endsWith('.') ? normalized : normalized + '.';
+      const result = normalized.endsWith('.') ? normalized : normalized + '.';
+      logger.debug('storage', 'goal detected', {
+        preview: result.slice(0, 60),
+      });
+      return result;
     }
   }
   return null;

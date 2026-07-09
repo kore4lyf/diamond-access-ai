@@ -20,6 +20,7 @@ import {
   handleWhereWasI,
 } from '../lib/storage';
 import { ERRORS } from '../lib/errors';
+import * as logger from '../lib/logger';
 
 export default defineBackground(() => {
   console.log('Diamond Access AI service worker started');
@@ -121,6 +122,19 @@ export default defineBackground(() => {
         return true;
       }
 
+      // ── GET_LOGS: dump the buffer for the Options Diagnostic panel ─────
+      if (msg.type === 'GET_LOGS') {
+        sendResponse({ logs: logger.getLogs().map((e) => ({ ...e })) });
+        return true;
+      }
+
+      // ── CLEAR_LOGS: empty the buffer (button click on Options page) ─────
+      if (msg.type === 'CLEAR_LOGS') {
+        logger.clearLogs();
+        sendResponse({ ok: true });
+        return true;
+      }
+
       // Default: acknowledge receipt
       sendResponse({ received: true, type: msg.type ?? 'unknown' });
       return true;
@@ -155,10 +169,12 @@ async function handleCommand(
   msg: Record<string, unknown>,
   sendResponse: (response?: unknown) => void,
 ): Promise<void> {
+  const sw = new logger.Stopwatch('command', 'COMMAND round-trip');
   try {
     // Check if API key is configured before attempting LLM call
     const { diamond_api_key } = await chrome.storage.local.get('diamond_api_key');
     if (!diamond_api_key) {
+      logger.warn('command', 'no API key set', { url: msg.url });
       sendResponse({ text: ERRORS.API_KEY_MISSING });
       return;
     }
@@ -168,11 +184,22 @@ async function handleCommand(
     const url = msg.url as string | undefined;
 
     if (!transcript || !pageStructure) {
+      logger.warn('command', 'missing transcript or pageStructure', {
+        hasTranscript: !!transcript,
+        hasPageStructure: !!pageStructure,
+      });
       sendResponse({
         text: ERRORS.EMPTY_RESPONSE,
       });
       return;
     }
+
+    logger.info('command', 'received', {
+      transcriptLen: transcript.length,
+      pageStructureLen: pageStructure.length,
+      url,
+      transcriptPreview: transcript.slice(0, 80),
+    });
 
     // ── Phase G: Load session ────────────────────────────────────────────
     const session = await storage.getSession();
@@ -180,14 +207,18 @@ async function handleCommand(
     // ── Handle "clear context" ───────────────────────────────────────────
     const clearResponse = await handleClearCommand(transcript, storage);
     if (clearResponse) {
+      logger.info('command', 'clear context handled');
       sendResponse({ text: clearResponse });
+      sw.stop('cleared');
       return;
     }
 
     // ── Handle "where was I?" ────────────────────────────────────────────
     const whereResponse = handleWhereWasI(transcript, session);
     if (whereResponse) {
+      logger.info('command', 'where-was-I handled');
       sendResponse({ text: whereResponse });
+      sw.stop('where-was-I');
       return;
     }
 
@@ -200,10 +231,21 @@ async function handleCommand(
       url,
     });
 
+    logger.debug('llm_request', 'outbound', {
+      promptLen: userMessage.length,
+      pageStructureLen: pageStructure.length,
+      historyTurns: session.conversation.length,
+    });
+
     // ── Call LLM ─────────────────────────────────────────────────────────
-    console.time('diamond-background-llm');
+    const llmSw = new logger.Stopwatch('llm_response', 'LLM call');
     const responseText = await callLLMWithRetry(SYSTEM_PROMPT, userMessage);
-    console.timeEnd('diamond-background-llm');
+    const llmMs = llmSw.stop();
+
+    logger.info('llm_response', 'received', {
+      length: responseText.length,
+      ms: llmMs,
+    });
 
     // ── Phase G: Update session ─────────────────────────────────────────
     const newGoal = detectGoal(transcript);
@@ -211,6 +253,7 @@ async function handleCommand(
     if (newGoal) {
       // Set the new active goal
       session.activeGoal = newGoal;
+      logger.info('storage', 'new goal detected', { goal: newGoal });
     }
 
     // Append the turn to conversation history
@@ -218,10 +261,15 @@ async function handleCommand(
       user: transcript,
       assistant: responseText,
     });
+    logger.debug('storage', 'turn appended', { conversationLen: session.conversation.length + 1 });
 
     sendResponse({ text: responseText });
+    sw.stop('done');
   } catch (e: unknown) {
     console.error('[background] COMMAND error:', e);
+    logger.error('command', 'failure', {
+      err: e instanceof Error ? e.message : String(e),
+    });
     // Surface the configuration gap explicitly when the LLM client
     // threw because no API key is in chrome.storage.local. Without this
     // match, the user would just hear the generic "AI service unavailable"
@@ -229,11 +277,13 @@ async function handleCommand(
     const errorMessage = e instanceof Error ? e.message : String(e);
     if (errorMessage.includes('API key not configured')) {
       sendResponse({ text: ERRORS.API_KEY_MISSING });
+      sw.stop('api-key-missing');
       return;
     }
     sendResponse({
       text: ERRORS.AI_UNAVAILABLE,
     });
+    sw.stop('fallback-error');
   }
 }
 
@@ -248,29 +298,46 @@ async function handlePageLoad(
   msg: Record<string, unknown>,
   sendResponse: (response?: unknown) => void,
 ): Promise<void> {
+  const sw = new logger.Stopwatch('page_load', 'PAGE_LOAD');
   try {
     // Check if API key is configured before attempting LLM call
     const { diamond_api_key } = await chrome.storage.local.get('diamond_api_key');
     if (!diamond_api_key) {
+      logger.warn('page_load', 'no API key set');
       sendResponse({ summary: ERRORS.API_KEY_MISSING });
+      sw.stop('api-key-missing');
       return;
     }
 
     const url = (msg.url as string) ?? '';
     const structure = (msg.structure as string) ?? '';
 
+    logger.info('page_load', 'received', { url, structureLen: structure.length });
+
     const prompt = PAGE_LOAD_PROMPT_TEMPLATE.replace('{url}', url).replace(
       '{structure}',
       structure || '(empty page)',
     );
 
-    const summary = await callLLMWithRetry(SYSTEM_PROMPT, prompt);
-    sendResponse({ summary });
+    const llmMs = (await (async () => {
+      const inner = new logger.Stopwatch('llm_response', 'PAGE_LOAD LLM');
+      const summary = await callLLMWithRetry(SYSTEM_PROMPT, prompt);
+      const ms = inner.stop();
+      logger.info('llm_response', 'PAGE_LOAD summary', { length: summary.length });
+      return summary;
+    })());
+
+    sendResponse({ summary: llmMs });
+    sw.stop('done');
   } catch (e: unknown) {
     console.error('[background] PAGE_LOAD error:', e);
+    logger.error('page_load', 'failure', {
+      err: e instanceof Error ? e.message : String(e),
+    });
     // Graceful fallback — no summary, just page title
     const url = (msg.url as string) ?? '';
     sendResponse({ summary: `Page loaded: ${url}` });
+    sw.stop('fallback');
   }
 }
 
@@ -285,7 +352,9 @@ async function handlePageLoad(
 async function handleVlmRequest(
   sendResponse: (response?: unknown) => void,
 ): Promise<void> {
+  const sw = new logger.Stopwatch('vlm', 'VLM round-trip');
   try {
+    logger.info('vlm', 'captureVisibleTab requested');
     const dataUrl = await chrome.tabs.captureVisibleTab({
       format: 'png',
     });
@@ -294,17 +363,34 @@ async function handleVlmRequest(
     const base64 = dataUrl.split(',')[1] ?? '';
 
     if (!base64) {
+      logger.warn('vlm', 'no base64 from dataUrl');
       sendResponse({ description: '' });
+      sw.stop('empty-dataurl');
       return;
     }
 
+    logger.debug('vlm', 'image captured', { base64Len: base64.length });
+
+    const llmSw = new logger.Stopwatch('llm_response', 'VLM call');
     const description = await callVLM(VLM_SYSTEM_PROMPT, base64);
+    const llmMs = llmSw.stop();
+
+    logger.info('llm_response', 'VLM description', {
+      length: description.length,
+      ms: llmMs,
+    });
+
     sendResponse({ description });
+    sw.stop('done');
   } catch (e: unknown) {
     console.error('[background] VLM_REQUEST error:', e);
+    logger.error('vlm', 'failure', {
+      err: e instanceof Error ? e.message : String(e),
+    });
     sendResponse({
       description: ERRORS.AI_UNAVAILABLE,
     });
+    sw.stop('fallback');
   }
 }
 
@@ -318,13 +404,20 @@ async function handleFireworksTest(
   _msg: Record<string, unknown>,
   sendResponse: (response?: unknown) => void,
 ): Promise<void> {
+  const sw = new logger.Stopwatch('llm_response', 'FIREWORKS_TEST');
   try {
     const response = await callLLMWithRetry(
       'You are a test echo.',
       'Reply with the word: OK',
     );
+    sw.stop('ok');
+    logger.info('llm_response', 'FIREWORKS_TEST ok', { reply: response });
     sendResponse({ ok: true, reply: response });
   } catch (e: unknown) {
+    logger.error('llm_response', 'FIREWORKS_TEST fail', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+    sw.stop('fail');
     sendResponse({ ok: false, error: String(e) });
   }
 }

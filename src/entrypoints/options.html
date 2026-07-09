@@ -134,6 +134,20 @@
       Get a key at <a href="https://fireworks.ai/" target="_blank" rel="noopener">fireworks.ai</a>.
     </div>
 
+    <details class="diag-block" style="margin-top: 28px;">
+      <summary style="cursor: pointer; font-weight: 600; padding: 8px 0; color: var(--fg);">Diagnostics</summary>
+      <p class="hint" style="margin-top: 8px;">
+        Last <strong>500</strong> events from the service worker logger. Useful for development — click <em>Refresh logs</em> after using Diamond to inspect what it did: transcripts (with the user&rsquo;s voice text), dispatched actions, LLM round-trips, TTS utterances, errors, sleep-timer resets, lifecycle events.
+        <br />
+        <strong>Privacy:</strong> sensitive field <em>values</em> are never logged &mdash; only the field <em>type</em> (&ldquo;password&rdquo;, &ldquo;credit-card&rdquo;, &ldquo;ssn&rdquo;, &ldquo;cvv&rdquo;, &ldquo;dob&rdquo;). LLM prompt and response <em>bodies</em> are also never logged.
+      </p>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+        <button id="refresh-logs-btn" type="button">Refresh logs</button>
+        <button id="clear-logs-btn" type="button" style="background: transparent; color: var(--fg-muted); border: 1px solid var(--border); font-weight: 500;">Clear logs</button>
+      </div>
+      <pre id="logs-pre" style="margin-top: 14px; padding: 12px 14px; max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: rgba(0, 0, 0, 0.04); font-family: ui-monospace, 'Cascadia Mono', 'Roboto Mono', monospace; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; color: var(--fg);"></pre>
+    </details>
+
     <!--
       MV3 CSP is `script-src 'self'` — inline scripts are blocked unless
       the manifest allows `'unsafe-inline'` or pins the script's sha256.
