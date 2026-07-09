@@ -246,15 +246,75 @@ export function tryParseJSON(text: string): object | null {
 }
 
 // ---------------------------------------------------------------------------
-// VLM stub — Phase E
+// VLM — multimodal (vision) call
 // ---------------------------------------------------------------------------
 
 /**
- * Multimodal (VLM) call — screenshot analysis.
- * NOT implemented until Phase E.
+ * Call Fireworks with a multimodal (text + image) message.
  *
- * @throws Error('Not implemented — Phase E')
+ * Uses the same API key and model resolution as callLLM().
+ * MiniMax M3 supports this format natively.
+ *
+ * @param systemPrompt - System-level instruction
+ * @param imageBase64  - PNG screenshot encoded as base64 (without data: URL prefix)
+ * @param userMessage  - Optional user message (default: "Describe this webpage")
+ * @returns The model's response text
+ * @throws Error('API key not configured.') if key is missing
+ * @throws Error('Fireworks API error ...') on HTTP failure
  */
-export function callVLM(..._args: unknown[]): Promise<string> {
-  throw new Error('Not implemented — Phase E');
+export async function callVLM(
+  systemPrompt: string,
+  imageBase64: string,
+  userMessage?: string,
+): Promise<string> {
+  const result = await chrome.storage.local.get([
+    'diamond_api_key',
+    'diamond_model',
+  ]);
+
+  const apiKey = result.diamond_api_key as string | undefined;
+  if (!apiKey) {
+    throw new Error('API key not configured. Open extension settings.');
+  }
+
+  const model =
+    (result.diamond_model as string | undefined) ?? DEV_MODEL_ID;
+
+  const userContent: Array<Record<string, unknown>> = [
+    {
+      type: 'image_url',
+      image_url: { url: `data:image/png;base64,${imageBase64}` },
+    },
+  ];
+  if (userMessage) {
+    userContent.push({ type: 'text', text: userMessage });
+  }
+
+  const response = await globalThis.fetch(FIREWORKS_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 1024,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Fireworks API error ${response.status}: ${body}`);
+  }
+
+  const data: unknown = await response.json();
+  const content = extractContent(data);
+  if (content === null) {
+    throw new Error('Malformed Fireworks response');
+  }
+  return content;
 }

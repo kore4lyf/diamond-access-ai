@@ -14,6 +14,7 @@ import {
   callLLMCore,
   callLLM,
   callLLMWithRetry,
+  callVLM,
   tryParseJSON,
   FIREWORKS_URL,
   DEV_MODEL_ID,
@@ -437,5 +438,95 @@ describe('callLLMWithRetry', () => {
     ).rejects.toThrow('Fireworks API call failed');
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// callVLM — multimodal
+// ---------------------------------------------------------------------------
+
+describe('callVLM', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('throws API key not configured when key is missing', async () => {
+    mockChromeStorage({});
+    vi.stubGlobal('fetch', mockFetchOk('a description'));
+
+    await expect(
+      callVLM('You are a vision assistant.', 'base64imagestring'),
+    ).rejects.toThrow('API key not configured. Open extension settings.');
+  });
+
+  it('returns content on successful response', async () => {
+    mockKeyPresent();
+    const fetchMock = mockFetchOk('This is a product page with a heading...');
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await callVLM(
+      'You are a vision assistant.',
+      'base64imagestring',
+      'Describe this page',
+    );
+
+    expect(result).toBe('This is a product page with a heading...');
+
+    // Verify the request body contains multimodal content
+    const opts = fetchMock.mock.calls[0][1];
+    const body = JSON.parse(opts.body);
+
+    expect(body.model).toBe(DEV_MODEL_ID);
+    expect(body.messages).toHaveLength(2);
+    expect(body.messages[0].role).toBe('system');
+    expect(body.messages[1].role).toBe('user');
+
+    // Content should be an array with image_url and optional text
+    const content = body.messages[1].content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content[0].type).toBe('image_url');
+    expect(content[0].image_url.url).toContain('data:image/png;base64');
+    expect(content[0].image_url.url).toContain('base64imagestring');
+
+    // Second content item should be the user message
+    expect(content[1].type).toBe('text');
+    expect(content[1].text).toBe('Describe this page');
+  });
+
+  it('sends only image content when userMessage is omitted', async () => {
+    mockKeyPresent();
+    const fetchMock = mockFetchOk('A page screenshot');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await callVLM('You are a vision assistant.', 'imgbase64');
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const content = body.messages[1].content;
+    expect(content).toHaveLength(1);
+    expect(content[0].type).toBe('image_url');
+  });
+
+  it('throws Fireworks API error on HTTP failure', async () => {
+    mockKeyPresent();
+    const fetchMock = mockFetchError(401, 'unauthorized');
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      callVLM('sys', 'base64img'),
+    ).rejects.toThrow('Fireworks API error 401: unauthorized');
+  });
+
+  it('throws Malformed Fireworks response on bad payload', async () => {
+    mockKeyPresent();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ choices: [] }),
+      text: () => Promise.resolve(''),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      callVLM('sys', 'img'),
+    ).rejects.toThrow('Malformed Fireworks response');
   });
 });
