@@ -12,11 +12,18 @@
   const input = document.getElementById('api-key-input');
   const saveBtn = document.getElementById('save-btn');
   const status = document.getElementById('status');
+  const showKeyCheckbox = document.getElementById('show-key-checkbox');
 
   function setStatus(text, kind) {
     status.textContent = text;
     status.className = 'status' + (kind ? ' ' + kind : '');
   }
+
+  // Toggle input masking. The typed value is preserved across toggles —
+  // only the input.type changes; the value stays.
+  showKeyCheckbox.addEventListener('change', function () {
+    input.type = showKeyCheckbox.checked ? 'text' : 'password';
+  });
 
   // Load existing key on mount.
   if (chrome.storage && chrome.storage.local) {
@@ -32,10 +39,19 @@
   }
 
   // Save on button click.
+  //
+  // Empty input acts as "clear" — removes the stored key. This matches
+  // the user's intent: no dedicated Clear button, but explicit emptiness
+  // is treated as a removal so users can wipe without saving a dummy.
   saveBtn.addEventListener('click', async function () {
     const key = (input.value || '').trim();
     if (!key) {
-      setStatus('Please enter a valid API key.', 'err');
+      try {
+        await chrome.storage.local.remove('diamond_api_key');
+        setStatus('API key cleared.', '');
+      } catch (e) {
+        setStatus('Could not clear (storage unavailable): ' + e.message, 'err');
+      }
       return;
     }
     try {
