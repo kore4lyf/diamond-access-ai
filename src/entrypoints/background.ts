@@ -8,10 +8,10 @@
 import { defineBackground } from 'wxt/utils/define-background';
 import { callLLMWithRetry, callVLM } from '../lib/fireworks';
 import {
-  SYSTEM_PROMPT,
-  PAGE_LOAD_PROMPT_TEMPLATE,
-  VLM_SYSTEM_PROMPT,
+  PERSONA_BLOCK,
   buildCommandPrompt,
+  buildPageLoadPrompt,
+  buildVlmPrompt,
 } from '../lib/prompts';
 import {
   storage,
@@ -222,9 +222,8 @@ async function handleCommand(
       return;
     }
 
-    // ── Build context prompt ────────────────────────────────────────────
+    // ── Build context prompt (COMMAND_TASK + page-specific block) ───────
     const userMessage = buildCommandPrompt({
-      systemPrompt: SYSTEM_PROMPT,
       pageStructure,
       transcript,
       session,
@@ -237,9 +236,9 @@ async function handleCommand(
       historyTurns: session.conversation.length,
     });
 
-    // ── Call LLM ─────────────────────────────────────────────────────────
+    // ── Call LLM — persona as system role, COMMAND_TASK as user role ─────
     const llmSw = new logger.Stopwatch('llm_response', 'LLM call');
-    const responseText = await callLLMWithRetry(SYSTEM_PROMPT, userMessage);
+    const responseText = await callLLMWithRetry(PERSONA_BLOCK, userMessage);
     const llmMs = llmSw.stop();
 
     logger.info('llm_response', 'received', {
@@ -311,23 +310,19 @@ async function handlePageLoad(
 
     const url = (msg.url as string) ?? '';
     const structure = (msg.structure as string) ?? '';
+    const title = (msg.title as string) ?? '';
 
     logger.info('page_load', 'received', { url, structureLen: structure.length });
 
-    const prompt = PAGE_LOAD_PROMPT_TEMPLATE.replace('{url}', url).replace(
-      '{structure}',
-      structure || '(empty page)',
-    );
+    // ── Build prompt (PAGE_LOAD_TASK + page-specific block) ──────────────
+    const prompt = buildPageLoadPrompt({ url, title, structure });
 
-    const llmMs = (await (async () => {
-      const inner = new logger.Stopwatch('llm_response', 'PAGE_LOAD LLM');
-      const summary = await callLLMWithRetry(SYSTEM_PROMPT, prompt);
-      const ms = inner.stop();
-      logger.info('llm_response', 'PAGE_LOAD summary', { length: summary.length });
-      return summary;
-    })());
+    const llmSw = new logger.Stopwatch('llm_response', 'PAGE_LOAD LLM');
+    const summary = await callLLMWithRetry(PERSONA_BLOCK, prompt);
+    const llmMs = llmSw.stop();
+    logger.info('llm_response', 'PAGE_LOAD summary', { length: summary.length });
 
-    sendResponse({ summary: llmMs });
+    sendResponse({ summary });
     sw.stop('done');
   } catch (e: unknown) {
     console.error('[background] PAGE_LOAD error:', e);
@@ -372,7 +367,7 @@ async function handleVlmRequest(
     logger.debug('vlm', 'image captured', { base64Len: base64.length });
 
     const llmSw = new logger.Stopwatch('llm_response', 'VLM call');
-    const description = await callVLM(VLM_SYSTEM_PROMPT, base64);
+    const description = await callVLM(PERSONA_BLOCK, base64, buildVlmPrompt());
     const llmMs = llmSw.stop();
 
     logger.info('llm_response', 'VLM description', {

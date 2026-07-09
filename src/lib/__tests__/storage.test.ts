@@ -22,7 +22,7 @@ import {
   type Turn,
   type StorageBackend,
 } from '../storage';
-import { buildCommandPrompt, SYSTEM_PROMPT } from '../prompts';
+import { buildCommandPrompt } from '../prompts';
 import { ERRORS } from '../errors';
 
 // ---------------------------------------------------------------------------
@@ -193,21 +193,32 @@ describe('createStorage core', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildCommandPrompt', () => {
-  it('builds prompt with system + page + command (no context)', () => {
+  it('builds prompt with COMMAND_TASK content + page + command (no context)', () => {
     const session = emptySession();
     const prompt = buildCommandPrompt({
-      systemPrompt: SYSTEM_PROMPT,
       pageStructure: '[button] "Click me"',
       transcript: 'click the button',
       session,
     });
 
-    expect(prompt).toContain(SYSTEM_PROMPT);
+    // The user-message portion contains COMMAND_TASK content (schemas,
+    // worked examples, INPUT block) — persona is sent separately as system
+    // and is therefore NOT in the user message. Test the COMMAND_TASK
+    // signature content instead.
+    expect(prompt).toContain('ACTION SCHEMAS');
     expect(prompt).toContain('[button] "Click me"');
     expect(prompt).toContain('click the button');
-    // No goal or history sections
+    // The optional ACTIVE GOAL input-block section is stripped when goal
+    // is empty — the label header itself must not appear.
     expect(prompt).not.toContain('ACTIVE GOAL:');
-    expect(prompt).not.toContain('CONVERSATION HISTORY:');
+    // The optional CONVERSATION HISTORY input-block section is stripped
+    // when history is empty — the input-block label header goes away.
+    // (Note: the phrase "CONVERSATION HISTORY" still legitimately appears
+    // earlier in COMMAND_TASK's FORMAT RULES, so test the specific header.)
+    expect(prompt).not.toContain('CONVERSATION HISTORY (most recent last):');
+    // And no placeholder / substitution text survives in the empty case.
+    expect(prompt).not.toContain('(none set)');
+    expect(prompt).not.toContain('(no prior turns)');
   });
 
   it('includes active goal when set', () => {
@@ -217,7 +228,6 @@ describe('buildCommandPrompt', () => {
       formState: {},
     };
     const prompt = buildCommandPrompt({
-      systemPrompt: SYSTEM_PROMPT,
       pageStructure: 'text',
       transcript: 'show me',
       session,
@@ -236,13 +246,12 @@ describe('buildCommandPrompt', () => {
       formState: {},
     };
     const prompt = buildCommandPrompt({
-      systemPrompt: SYSTEM_PROMPT,
       pageStructure: 'text',
       transcript: 'show the cheapest',
       session,
     });
 
-    expect(prompt).toContain('CONVERSATION HISTORY:');
+    expect(prompt).toContain('CONVERSATION HISTORY (most recent last):');
     expect(prompt).toContain('"find a shirt"');
     expect(prompt).toContain('"Found 3 shirts."');
   });
@@ -258,7 +267,6 @@ describe('buildCommandPrompt', () => {
       formState: {},
     };
     const prompt = buildCommandPrompt({
-      systemPrompt: SYSTEM_PROMPT,
       pageStructure: 'text',
       transcript: 'check',
       session,
@@ -279,7 +287,6 @@ describe('buildCommandPrompt', () => {
   it('includes URL when provided', () => {
     const session = emptySession();
     const prompt = buildCommandPrompt({
-      systemPrompt: SYSTEM_PROMPT,
       pageStructure: 'text',
       transcript: 'hi',
       session,
@@ -287,6 +294,16 @@ describe('buildCommandPrompt', () => {
     });
 
     expect(prompt).toContain('https://example.com/shop');
+  });
+
+  it('falls back to (unknown url) when no URL provided', () => {
+    const session = emptySession();
+    const prompt = buildCommandPrompt({
+      pageStructure: 'text',
+      transcript: 'hi',
+      session,
+    });
+    expect(prompt).toContain('URL: (unknown url)');
   });
 
   // ── PRIVACY TEST (HARD) ──────────────────────────────────────────────
@@ -304,7 +321,6 @@ describe('buildCommandPrompt', () => {
       },
     };
     const prompt = buildCommandPrompt({
-      systemPrompt: SYSTEM_PROMPT,
       pageStructure: 'text',
       transcript: 'check status',
       session,
