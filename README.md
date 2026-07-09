@@ -51,11 +51,19 @@ That's it. Navigate to any page, press **Alt+D**, and speak.
 
 | Shortcut | Action |
 |----------|--------|
-| `Alt+D` | Activate Diamond (push-to-talk) |
-| `Alt+Shift+D` | Activate Diamond (fallback — use if Alt+D conflicts) |
+| **`Alt+D`** | **Primary** — push-to-talk. Captured by the content-script `keydown` listener with `e.preventDefault()` to block Chrome's omnibox focus shortcut. Works on any page where the extension is loaded. |
+| `Ctrl+Shift+D` | **Fallback** — Chrome manifest binding. Use if Alt+D is intercepted by another shortcut. Set this at `chrome://extensions/shortcuts`. |
+| `Alt+Shift+D` | **Fallback 2** — Chrome manifest binding. |
+
+> **Why two paths?** Chrome strips `Alt+D` from the `chrome.commands` manifest binding because the browser reserves it for the omnibox focus shortcut. Diamond's content script captures `Alt+D` via a `keydown` listener (capture phase) and `preventDefault()`s the omnibox steal, restoring Alt+D as the primary UX shortcut. The manifest binding for `Ctrl+Shift+D` / `Alt+Shift+D` is a deliberate fallback for environments where the content-script listener doesn't fire (e.g., extension warning pages, browser settings pages).
+
+### Voice shortcuts (spoken, not key-bound)
+
+| Spoken phrase | Action |
+|---------------|--------|
 | Say *"clear context"* | Reset conversation history and active goal |
 | Say *"where was I?"* | Recap what you were doing |
-| Say *"confirm"* or *"yes"* | Confirm a pending action (submit, delete, purchase) |
+| Say *"confirm"* / *"yes"* | Confirm a pending action (submit, delete, purchase) |
 
 ---
 

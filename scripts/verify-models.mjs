@@ -23,19 +23,25 @@ const __dirname = dirname(__filename);
 
 const FIREWORKS_URL = 'https://api.fireworks.ai/inference/v1/chat/completions';
 
-// --- Load FW_KEY from .env if not already in environment ---
+// --- Load FW_KEY / VITE_FW_KEY from .env if not already in environment ---
 
-if (!process.env.FW_KEY) {
+function loadEnvKey(variableName) {
   try {
     const envPath = join(__dirname, '..', '.env');
     const envContent = readFileSync(envPath, 'utf8');
-    const match = envContent.match(/^FW_KEY=(.+)$/m);
+    const match = envContent.match(new RegExp(`^${variableName}=(.+)$`, 'm'));
     if (match) {
-      process.env.FW_KEY = match[1].trim().replace(/^["']|["']$/g, '');
+      return match[1].trim().replace(/^["']|["']$/g, '');
     }
   } catch {
-    // .env not found — will fail below with a clear message
+    // .env not found
   }
+  return null;
+}
+
+if (!process.env.FW_KEY) {
+  process.env.FW_KEY =
+    process.env.VITE_FW_KEY || loadEnvKey('VITE_FW_KEY') || loadEnvKey('FW_KEY') || '';
 }
 
 // --- Model configs ---

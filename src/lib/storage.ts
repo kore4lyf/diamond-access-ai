@@ -14,7 +14,13 @@
  *     Only labels ("Home", "Office", "email address") flow into the prompt.
  *   - formState holds PII the user never spoke — it is NEVER read by
  *     the prompt builder.
+ *
+ * Phase H invariant (applied):
+ *   Every spoken user-facing string lives in `errors.ts` `ERRORS.*`.
+ *   No hardcoded strings in this module.
  */
+
+import { ERRORS } from './errors';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -241,6 +247,8 @@ const WHERE_WAS_I_PATTERNS = [
 /**
  * Check if the transcript is a "clear context" command and handle it.
  *
+ * Uses `ERRORS.CLEAR_CONTEXT` for the spoken confirmation (Phase H invariant).
+ *
  * @param transcript - The user's spoken command
  * @param storeInstance - The storage instance (for clearSession)
  * @returns A response string if it was a clear command, null otherwise
@@ -252,7 +260,7 @@ export async function handleClearCommand(
   for (const pattern of CLEAR_PATTERNS) {
     if (pattern.test(transcript.trim())) {
       await storeInstance.clearSession();
-      return 'Context cleared.';
+      return ERRORS.CLEAR_CONTEXT;
     }
   }
   return null;
@@ -261,7 +269,9 @@ export async function handleClearCommand(
 /**
  * Check if the transcript is a "where was I?" query.
  *
- * @param transcript - The user's spoken command  
+ * Uses `ERRORS.*` constants for every spoken string (Phase H invariant).
+ *
+ * @param transcript - The user's spoken command
  * @param session - Current session state
  * @returns A response string if it was a where-was-I query, null otherwise
  */
@@ -271,21 +281,23 @@ export function handleWhereWasI(
 ): string | null {
   for (const pattern of WHERE_WAS_I_PATTERNS) {
     if (pattern.test(transcript.trim())) {
-      const parts: string[] = [];
-      if (session.activeGoal) {
-        parts.push(`Your active goal is: ${session.activeGoal}.`);
-      }
       const recentTurns = session.conversation.slice(-2);
-      if (recentTurns.length > 0) {
-        parts.push('Here is what we were doing:');
-        for (const turn of recentTurns) {
-          parts.push(`You said: "${turn.user}". I replied: "${turn.assistant}".`);
-        }
+      const hasGoal = !!session.activeGoal;
+      const hasTurns = recentTurns.length > 0;
+
+      // No goal AND no recent turns — bare session.
+      if (!hasGoal && !hasTurns) {
+        return ERRORS.NO_CONTEXT;
       }
-      if (parts.length === 0) {
-        return "We haven't done anything yet. What can I help you with?";
-      }
-      return parts.join(' ');
+
+      // Strip trailing punctuation from goal so WHERE_WAS_I's "."
+      // doesn't produce a double period.
+      const normalizedGoal = (session.activeGoal ?? '').replace(/\.+$/, '');
+      const turnsText = recentTurns
+        .map((t) => `You said "${t.user}". I said "${t.assistant}".`)
+        .join(' ');
+
+      return ERRORS.WHERE_WAS_I(normalizedGoal, turnsText);
     }
   }
   return null;

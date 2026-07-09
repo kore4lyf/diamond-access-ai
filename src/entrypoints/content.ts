@@ -1,8 +1,12 @@
 // Diamond Access AI — Content Script
 // Phase A: skeleton — log injection, send PAGE_LOAD once
 // Phase D: ACTIVATE handler — push-to-talk voice loop
+// Phase D: Alt+D `keydown` listener (content-script fallback for
+//          PC-D-4 — Chrome strips Alt+D from `chrome.commands` because
+//          the browser reserves it for the omnibox focus shortcut).
 // Phase E: Command integration — full round-trip: listen → DOM walk → LLM → speak → action
 // Phase F: Action execution — real click/navigate/fill/confirm via actions.ts
+// Phase H: Safety-net wrap + ERRORS-only strings + latency logging
 
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import {
@@ -29,8 +33,19 @@ import { ERRORS } from '../lib/errors';
 /** True while a COMMAND round-trip is in flight — prevents overlapping. */
 let isProcessing = false;
 
-/** Elements from the last buildPageSnapshot call (for action resolution). */
-let lastSnapshot = buildPageSnapshot();
+// ---------------------------------------------------------------------------
+// Activation-route state
+// ---------------------------------------------------------------------------
+/**
+ * Tracks where the next `activateDiamond()` invocation came from so the
+ * confirmation/early-return paths can end timers symmetrically.
+ *
+ * Sources:
+ *   'sw'    — Chrome `commands.onCommand` (Ctrl+Shift+D, Alt+Shift+D)
+ *   'kbd'   — Content-script `keydown` (Alt+D, the primary UX shortcut)
+ */
+type ActivationSource = 'sw' | 'kbd';
+let lastActivationSource: ActivationSource = 'sw';
 
 // ---------------------------------------------------------------------------
 // Main entry point
@@ -50,7 +65,6 @@ export default defineContentScript({
 
     // PAGE_LOAD: build snapshot and send to background for auto-summary
     const snap = buildPageSnapshot();
-    lastSnapshot = snap;
 
     chrome.runtime
       .sendMessage({
@@ -68,13 +82,58 @@ export default defineContentScript({
         // Service worker may not be awake — silent fallback
       });
 
-    // Phase D/E/F: listen for Alt+D activation from the service worker
+    // Phase D/E/F: listen for `ACTIVATE` from the service worker
+    // (triggered by chrome.commands.onCommand for Ctrl+Shift+D / Alt+Shift+D).
     chrome.runtime.onMessage.addListener((message) => {
       const msg = message as { type?: string };
       if (msg.type === 'ACTIVATE') {
+        lastActivationSource = 'sw';
         activateDiamond();
       }
     });
+
+    // Phase D: Alt+D local keydown — the user's *primary* shortcut.
+    // Chrome's `commands` manifest binding can't carry Alt+D (the browser
+    // reserves that key for the omnibox focus shortcut), so we capture it
+    // here, preventDefault to stop the omnibox steal, and route to
+    // activateDiamond() — same code path as CTRL+Shift+D.
+    //
+    // Guard rules (PC-D-4):
+    //   - `e.code === 'KeyD'` — locale-independent (e.key would be 'd' etc.)
+    //   - `e.altKey === true`  — Alt must be held
+    //   - `!e.shiftKey`        — modifier exclusivity vs. Alt+Shift+D fallback
+    //   - `!e.ctrlKey && !e.metaKey` — avoid clobbering Ctrl+Alt+D / Cmd+Alt+D
+    //   - `!e.repeat`          — ignore OS key-repeat double-fire
+    //   - target is NOT a form field / contentEditable — never steal typing
+    window.addEventListener(
+      'keydown',
+      (e: KeyboardEvent) => {
+        if (
+          e.code !== 'KeyD' ||
+          !e.altKey ||
+          e.shiftKey ||
+          e.ctrlKey ||
+          e.metaKey ||
+          e.repeat
+        ) {
+          return;
+        }
+        const target = e.target;
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          (target instanceof HTMLElement && target.isContentEditable)
+        ) {
+          return; // user is typing — don't interrupt.
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        lastActivationSource = 'kbd';
+        activateDiamond();
+      },
+      true, // capture phase so we beat page-level handlers
+    );
   },
 });
 
@@ -107,8 +166,11 @@ async function activateDiamond(): Promise<void> {
   resetSleepTimer();
 
   if (!transcript) {
+    // Per ERRORS.STT_NO_SPEECH: silence on no-speech. The constant is
+    // intentionally empty — don't fall back to a spoken message which
+    // would defeat the design.
     console.timeEnd('diamond-command');
-    await speak(ERRORS.STT_NO_SPEECH || "I didn't hear anything.");
+    await speak(ERRORS.STT_NO_SPEECH);
     return;
   }
 
@@ -119,18 +181,20 @@ async function activateDiamond(): Promise<void> {
     const confirmResult = checkConfirmation(transcript);
 
     if (confirmResult.isConfirm && confirmResult.action) {
-      // User confirmed — execute the pending action
+      // User confirmed — execute the pending action.
+      // End diamond-command here: this branch returns BEFORE the
+      // try/finally block below, so without this timeEnd we'd leak a
+      // "Timer started but never ended" console warning on every confirm.
+      console.timeEnd('diamond-command');
       const snap = buildPageSnapshot();
-      lastSnapshot = snap;
       const result = await executeAction(confirmResult.action, snap);
       if (result) await speak(result);
       return;
     }
 
     if (confirmResult.hadPending) {
-      // User cancelled the pending action
+      // User cancelled the pending action — fall through to normal flow
       await speak(ERRORS.ACTION_CANCELLED);
-      // Fall through to normal command flow
     }
   }
 
@@ -138,7 +202,6 @@ async function activateDiamond(): Promise<void> {
   isProcessing = true;
   try {
     const snap = buildPageSnapshot();
-    lastSnapshot = snap;
 
     console.time('diamond-vlm');
     let pageContext = snap.structure;
@@ -176,6 +239,9 @@ async function activateDiamond(): Promise<void> {
         : (response as { text?: string })?.text ?? '';
 
     if (!rawResponse) {
+      // End diamond-command here. This branch returns BEFORE the
+      // finally block, so omitting this would leak a "Timer started
+      // but never ended" console warning.
       console.timeEnd('diamond-command');
       await speak(ERRORS.EMPTY_RESPONSE);
       return;
@@ -234,10 +300,11 @@ async function handleResponse(
   }
 
   if (!action) {
-    // Plain speech response
+    // Plain speech response -- handleResponse owns the diamond-action
+    // timer (set by activateDiamond's `console.time('diamond-action')`
+    // immediately before calling us), so this branch only needs to
+    // return. The activated timer ends cleanly in activateDiamond.
     await speak(trimmed);
-    console.timeEnd('diamond-action');
-    console.timeEnd('diamond-command');
     return;
   }
 

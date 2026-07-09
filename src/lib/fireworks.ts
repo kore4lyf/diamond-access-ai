@@ -34,9 +34,25 @@ export const FIREWORKS_URL =
  * Dev/MVP model ID — the ONLY model we call during development.
  * MiniMax M3, serverless on AMD MI300X via Fireworks.
  *
- * HARD RULE: Do NOT reference, default to, or "test just to see" the
- * production Gemma model. The runtime swap is a production release
- * operation, not a dev toggle.
+ * ─────────────────────────────────────────────────────────────────────
+ * HARD RULE — PRODUCTION MODEL MUST NEVER APPEAR IN src/
+ * ─────────────────────────────────────────────────────────────────────
+ * The production model ID (Gemma 4 31B IT) is documented in:
+ *   - `doc/DOC-MODEL-ADR.md` §3 — decision rationale
+ *   - `doc/DOC-FIREWORKS-INTEGRATION.md` — API specifics
+ *   - `doc/TO-PM.md` PM-6 — locked planning
+ *
+ * The runtime swap to Gemma is a *production release operation*,
+ * not a dev toggle. Adding the Gemma model ID here — even as a
+ * comment, fallback, or "just in case" branch — would couple our
+ * dev defaults to the prod surface. The `diamond_model` key in
+ * chrome.storage.local is the single, audited runtime swap path.
+ *
+ * CI guard (Phase I): `grep -niE 'gemma|akfaleye|t5rv9ps1' src/` MUST
+ * return empty (comments are filtered as the QA script does — the
+ * dev's guardrail comments here are exempted by an explicit grep
+ * pattern in `doc/TO-QA.md` QA-E10).
+ * ─────────────────────────────────────────────────────────────────────
  */
 export const DEV_MODEL_ID = 'accounts/fireworks/models/minimax-m3';
 

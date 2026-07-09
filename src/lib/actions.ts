@@ -497,12 +497,24 @@ function getLabelText(el: HTMLElement): string | null {
 
 /**
  * Check whether an element is writable (not disabled, not readOnly,
- * and is an input/textarea/select).
+ * and an instanceof HTMLInputElement / HTMLTextAreaElement / HTMLSelectElement).
+ *
+ * Guard rule: an HTMLDivElement, HTMLSpanElement, or any general
+ * HTMLElement is NEVER writable. We only fill actual form controls.
+ * This means the cast/lookup for `disabled` / `readOnly` is type-safe
+ * because we've already narrowed to input/textarea/select.
  */
 function isWritable(el: HTMLElement): boolean {
-  if (!('disabled' in el) && !('readOnly' in el)) return false;
-  if ((el as HTMLInputElement).disabled) return false;
-  if ((el as HTMLInputElement).readOnly) return false;
+  if (
+    !(el instanceof HTMLInputElement) &&
+    !(el instanceof HTMLTextAreaElement) &&
+    !(el instanceof HTMLSelectElement)
+  ) {
+    return false;
+  }
+  if (el.disabled) return false;
+  // readOnly only applies to input/textarea, not select — single check.
+  if ('readOnly' in el && el.readOnly) return false;
   return true;
 }
 

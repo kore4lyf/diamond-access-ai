@@ -23,6 +23,7 @@ import {
   type StorageBackend,
 } from '../storage';
 import { buildCommandPrompt, SYSTEM_PROMPT } from '../prompts';
+import { ERRORS } from '../errors';
 
 // ---------------------------------------------------------------------------
 // Fake store
@@ -450,10 +451,21 @@ describe('handleWhereWasI', () => {
     expect(result).toContain('add to cart');
   });
 
-  it('returns "nothing yet" when no goal and no history', () => {
+  it('returns ERRORS.NO_CONTEXT when no goal and no history', () => {
     const session = emptySession();
     const result = handleWhereWasI('recap', session);
-    expect(result).toContain("haven't done anything yet");
+    // Phase H invariant: user-facing strings come from ERRORS constants.
+    expect(result).toBe(ERRORS.NO_CONTEXT);
+  });
+
+  it('returns ERRORS.WHERE_WAS_I when goal is set (no recent turns)', () => {
+    const session: SessionState = {
+      conversation: [],
+      activeGoal: 'buying shoes.',
+      formState: {},
+    };
+    const result = handleWhereWasI('where was I?', session);
+    expect(result).toBe(ERRORS.WHERE_WAS_I('buying shoes', ''));
   });
 
   it('returns null for non-where-was-I commands', () => {

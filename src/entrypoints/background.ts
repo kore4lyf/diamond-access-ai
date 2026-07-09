@@ -24,13 +24,48 @@ import { ERRORS } from '../lib/errors';
 export default defineBackground(() => {
   console.log('Diamond Access AI service worker started');
 
-  // Phase G: Clear session on browser restart (profile is NOT cleared)
+  // ───────────────────────────────────────────────────────────────────────
+  // API KEY SEEDING — DEV-ONLY (HARD RULE)
+  // ───────────────────────────────────────────────────────────────────────
+  // Reads VITE_FW_KEY from .env to bridge dev convenience between
+  // `pnpm dev` (Termux) and `chrome.storage.local` runtime storage.
+  //
+  // HARD RULE: This function MUST NEVER run in a production build.
+  // Importing `import.meta.env.VITE_FW_KEY` directly would cause Vite
+  // to inline the literal key value into the shipped `background.js`,
+  // leaking the developer's $50 credit to anyone with the build artifact.
+  // The `import.meta.env.DEV` guard ensures Vite tree-shakes the branch
+  // out of the production bundle entirely (`pnpm build` strips it).
+  //
+  // ── Build hygiene checklist (Phase I) ──
+  //   1. `pnpm build` runs with VITE_FW_KEY unset in the environment.
+  //   2. `grep -RE 'fw_[A-Za-z0-9]{20,}' .output/` returns empty.
+  //   3. CI / pre-submit guard fails the build if (2) is non-empty.
+  // ───────────────────────────────────────────────────────────────────────
+  // Phase I (no-seed): the previous `seedApiKeyIfMissing()` referenced
+  // `import.meta.env.VITE_FW_KEY` which Vite inlined into the shipped
+  // `background.js`, leaking the developer's Fireworks API key. We have
+  // REMOVED that entire path. Users now set their own API key in the
+  // extension Options page after install.
+  //
+  // Note: `import.meta.env.VITE_*` references are now COMPLETELY absent
+  // from `src/` — the bundler has nothing to inline. CI guard
+  // `scripts/verify-no-secrets.sh` ensures this stays the case.
+  chrome.runtime.onInstalled.addListener(async () => {
+    console.log('[background] extension installed');
+    try {
+      await storage.clearSession();
+    } catch {
+      // Storage not available yet.
+    }
+  });
+
   chrome.runtime.onStartup.addListener(async () => {
     console.log('[background] browser startup — clearing session, preserving profile');
     try {
       await storage.clearSession();
     } catch {
-      // Gracefully handle if storage isn't available
+      // Storage not available yet.
     }
   });
 
@@ -121,6 +156,13 @@ async function handleCommand(
   sendResponse: (response?: unknown) => void,
 ): Promise<void> {
   try {
+    // Check if API key is configured before attempting LLM call
+    const { diamond_api_key } = await chrome.storage.local.get('diamond_api_key');
+    if (!diamond_api_key) {
+      sendResponse({ text: ERRORS.API_KEY_MISSING });
+      return;
+    }
+
     const transcript = msg.transcript as string | undefined;
     const pageStructure = msg.pageStructure as string | undefined;
     const url = msg.url as string | undefined;
@@ -180,6 +222,15 @@ async function handleCommand(
     sendResponse({ text: responseText });
   } catch (e: unknown) {
     console.error('[background] COMMAND error:', e);
+    // Surface the configuration gap explicitly when the LLM client
+    // threw because no API key is in chrome.storage.local. Without this
+    // match, the user would just hear the generic "AI service unavailable"
+    // and not know the fix is to open extension settings.
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    if (errorMessage.includes('API key not configured')) {
+      sendResponse({ text: ERRORS.API_KEY_MISSING });
+      return;
+    }
     sendResponse({
       text: ERRORS.AI_UNAVAILABLE,
     });
@@ -198,6 +249,13 @@ async function handlePageLoad(
   sendResponse: (response?: unknown) => void,
 ): Promise<void> {
   try {
+    // Check if API key is configured before attempting LLM call
+    const { diamond_api_key } = await chrome.storage.local.get('diamond_api_key');
+    if (!diamond_api_key) {
+      sendResponse({ summary: ERRORS.API_KEY_MISSING });
+      return;
+    }
+
     const url = (msg.url as string) ?? '';
     const structure = (msg.structure as string) ?? '';
 

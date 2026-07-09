@@ -38,6 +38,10 @@ export const ERRORS = {
   /** AI service (Fireworks API) is down or unreachable. */
   AI_UNAVAILABLE: 'AI service unavailable. Please try again.',
 
+  /** Fireworks API key not configured in settings. */
+  API_KEY_MISSING:
+    'Diamond is not configured yet. Open extension settings to set your API key.',
+
   /** Service worker terminated mid-command. */
   SW_TERMINATED: 'I lost my connection. Try again.',
 
