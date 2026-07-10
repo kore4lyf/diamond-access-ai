@@ -158,6 +158,15 @@
           .toISOString()
           .replace('T', ' ')
           .slice(0, 19);
+        // User speech entries (kind:'user_speech') take a different
+        // shape — single transcript line, no attempt/system/raw. Older
+        // LLM-only entries (no `kind` field) read back as llm here.
+        if (e.kind === 'user_speech') {
+          return (
+            '\u2500\u2500 ' + when + ' \u25b6 USER SAID \u2500\u2500\n' +
+            String(e.transcript || '')
+          );
+        }
         return (
           '\u2500\u2500 ' + when + ' attempt=' + (e.attempt == null ? '?' : e.attempt) + ' \u2500\u2500\n' +
           'system: ' + String(e.systemPrompt || '').slice(0, 240) + '\n' +

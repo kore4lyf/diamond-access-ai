@@ -6,7 +6,7 @@
 // Phase G: Session + profile, conversation history, goal detection, profile fills
 
 import { defineBackground } from 'wxt/utils/define-background';
-import { callLLMWithRetry, callVLM } from '../lib/fireworks';
+import { callLLMWithRetry, callVLM, captureUserSpeech } from '../lib/fireworks';
 import {
   PERSONA_BLOCK,
   buildCommandPrompt,
@@ -536,6 +536,13 @@ async function handleCommand(
       url,
       transcriptPreview: transcript.slice(0, 80),
     });
+    // Defense-in-depth transcript capture: voice.ts writes a transcript
+    // entry on STT success, and we re-capture here on receipt. Either
+    // source suffices; both keep the Options → "Verbose LLM" panel
+    // honest about what the user actually said, even when the LLM
+    // round-trip never lands (network down, hands-free session closes
+    // early, etc.).
+    void captureUserSpeech(transcript);
 
     // ── Phase G: Load session ────────────────────────────────────────────
     const session = await storage.getSession();

@@ -28,6 +28,7 @@
 
 import { ERRORS } from './errors';
 import * as logger from './logger';
+import { captureUserSpeech } from './fireworks';
 import { stripSpokenMarkdown } from './text-format';
 
 // ---------------------------------------------------------------------------
@@ -294,6 +295,11 @@ export function startListening(): Promise<string> {
         text: transcript,
         ms,
       });
+      // Belt-and-suspenders capture: voice.ts writes here, AND the SW
+      // also writes in handleCommand. Either source suffices; both
+      // keep the Options → "Verbose LLM response log" panel honest
+      // about what the user actually said.
+      void captureUserSpeech(transcript);
       cleanup(true);
       resetSleepTimer();
       resolve(transcript);

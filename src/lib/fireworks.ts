@@ -111,16 +111,60 @@ async function captureVerboseLLMBody(
   userMessage: string,
   attempt: number,
 ): Promise<void> {
-  // (a) SW DevTools console — single multi-line marker
-  // eslint-disable-next-line no-console
-  console.log(
-    '[Diamond VERBOSE LLM] attempt=' + attempt +
-      '\nsystem: ' + String(systemPrompt || '').slice(0, VERBOSE_PROMPT_TRUNCATE) +
-      '\nuser: '   + String(userMessage  || '').slice(0, VERBOSE_PROMPT_TRUNCATE) +
-      '\nraw: '    + String(raw         || ''),
-  );
+  // Capture fires whether or not the response is well-formed. The
+  // chat log shows the user can give a voice command that the LLM
+  // then elaborates on, and PC-QA wants to see both halves.
+  await captureVerboseEntry({
+    kind: 'llm',
+    attempt,
+    systemPrompt: String(systemPrompt || '').slice(0, VERBOSE_RAW_TRUNCATE),
+    userMessage:  String(userMessage  || '').slice(0, VERBOSE_PROMPT_TRUNCATE),
+    raw:          String(raw         || '').slice(0, VERBOSE_RAW_TRUNCATE),
+  });
+}
 
-  // (b) Persistent storage — capped at 50 entries, oldest evicted first.
+/**
+ * Capture a user voice transcript for the same verbose buffer. Bypasses
+ * the IS_DEV gate that hides `logger.info('stt', ...)`. Without this,
+ * PC-QA testers running the production CRX only ever see their own
+ * speech in the Options → Diagnostics "user" category when IS_DEV is
+ * true. With this, the transcript lands in the same buffer as LLM
+ * bodies and renders alongside them in the Options panel.
+ */
+export async function captureUserSpeech(transcript: string): Promise<void> {
+  await captureVerboseEntry({
+    kind: 'user_speech',
+    transcript: String(transcript || '').slice(0, VERBOSE_RAW_TRUNCATE),
+  });
+}
+
+/**
+ * Shared sink for both LLM bodies and user speech. Two console formats
+ * and one persistent storage buffer keyed by `VERPOSE_BUFFER_KEY`.
+ * Older LLM-only entries (no `kind` field) read back as 'llm' so the
+ * February 2026 production CRX doesn't break on legacy data.
+ */
+async function captureVerboseEntry(
+  entry: Record<string, unknown>,
+): Promise<void> {
+  const ts = (entry.ts as number) ?? Date.now();
+  const kind = String(entry.kind ?? 'llm');
+
+  // (a) SW DevTools console — single marker line per entry.
+  // eslint-disable-next-line no-console
+  if (kind === 'user_speech') {
+    console.log('[Diamond VERBOSE USER SPEECH] ' + String(entry.transcript ?? ''));
+  } else {
+    console.log(
+      '[Diamond VERBOSE LLM] attempt=' + String(entry.attempt ?? '?') +
+        '\nsystem: ' + String(entry.systemPrompt ?? '').slice(0, VERBOSE_PROMPT_TRUNCATE) +
+        '\nuser: '   + String(entry.userMessage  ?? '').slice(0, VERBOSE_PROMPT_TRUNCATE) +
+        '\nraw: '    + String(entry.raw         ?? ''),
+    );
+  }
+
+  // (b) Persistent storage — same buffer, capped + FIFO. Wrap so any
+  // write failure never breaks the calling code path.
   try {
     if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
     const stored = await chrome.storage.local.get(VERBOSE_BUFFER_KEY);
@@ -129,17 +173,11 @@ async function captureVerboseLLMBody(
     )
       ? (stored[VERBOSE_BUFFER_KEY] as Array<Record<string, unknown>>)
       : [];
-    buf.push({
-      ts: Date.now(),
-      attempt,
-      systemPrompt: String(systemPrompt || '').slice(0, VERBOSE_RAW_TRUNCATE),
-      userMessage:  String(userMessage  || '').slice(0, VERBOSE_PROMPT_TRUNCATE),
-      raw:          String(raw         || '').slice(0, VERBOSE_RAW_TRUNCATE),
-    });
+    buf.push({ ...entry, ts, kind });
     while (buf.length > VERBOSE_BUFFER_MAX) buf.shift();
     await chrome.storage.local.set({ [VERBOSE_BUFFER_KEY]: buf });
   } catch {
-    /* silent — never let logging break a real LLM reply */
+    /* silent — never let logging break a real path */
   }
 }
 
