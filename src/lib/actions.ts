@@ -332,8 +332,41 @@ export function navigateAction(url: string): string {
 /**
  * Set by backAction so forwardAction knows there's something to go
  * forward to. Cleared by forwardAction when it fires successfully.
+ *
+ * PC-VLOG follow-up (window.name persistence):
+ *   Naive module-level state does NOT survive the page navigation that
+ *   history.back() triggers — the new page's content script instance
+ *   re-initializes `let lastActionWasBack = false`. So even when the
+ *   user did "go back, then go forwards" inside one Diamond session,
+ *   forwardAction on the new page would see `lastActionWasBack` as
+ *   false and incorrectly report "no next page."
+ *
+ *   Chrome `window.name` is the standard platform-level workaround —
+ *   it persists across same-tab navigations (history.back, history.
+ *   forward, link clicks, location.assign, etc.) and is fresh on
+ *   new tabs/windows. Use it as the persistence layer.
  */
-let lastActionWasBack = false;
+const WINDOW_NAME_BACK = 'diamond_last_back';
+
+function readBackFlag(): boolean {
+  try {
+    return window.name === WINDOW_NAME_BACK;
+  } catch {
+    return false;
+  }
+}
+
+function writeBackFlag(on: boolean): void {
+  try {
+    if (on) {
+      window.name = WINDOW_NAME_BACK;
+    } else if (window.name === WINDOW_NAME_BACK) {
+      window.name = '';
+    }
+  } catch {
+    /* window.name is read-only in some sandboxes; ignore */
+  }
+}
 
 /**
  * Trigger the browser back gesture. Uses window.history.back() in the
@@ -346,25 +379,37 @@ export function backAction(description: string): string {
   if (history.length <= 1) {
     return 'There is no previous page to go back to.';
   }
-  lastActionWasBack = true;
+  writeBackFlag(true);
   const msg = description || 'Going back.';
-  setTimeout(() => { history.back(); }, 50);
+  setTimeout(() => {
+    try { history.back(); } catch (e) {
+      logger.warn('action', 'history.back() threw', {
+        err: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }, 50);
   return msg;
 }
 
 /**
  * Trigger the browser forward gesture. Only meaningful right after a
- * back — if we haven't backed out of anything, tell the user so
- * instead of scheduling a no-op forward that would stall.
+ * back (within the same tab — otherwise window.name is empty and
+ * we say so). Clears the persistent flag when we actually fire.
  */
 export function forwardAction(description: string): string {
   logger.info('action', 'forward', { historyLen: history.length });
-  if (!lastActionWasBack) {
+  if (!readBackFlag()) {
     return 'There is no next page to go forward to.';
   }
-  lastActionWasBack = false;
+  writeBackFlag(false);
   const msg = description || 'Going forward.';
-  setTimeout(() => { history.forward(); }, 50);
+  setTimeout(() => {
+    try { history.forward(); } catch (e) {
+      logger.warn('action', 'history.forward() threw', {
+        err: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }, 50);
   return msg;
 }
 
