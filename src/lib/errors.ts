@@ -105,6 +105,25 @@ export const ERRORS = {
 
   /** No context available for recap. */
   NO_CONTEXT: "I don't have any recent context.",
+
+  // ── Activation mode toggle (Phase J) ─────────────────────────────────
+
+  /**
+   * Spoken feedback when the user enables hands-free mode.
+   * Kept terse — blind users hear this repeatedly. The persona's voice rules
+   * say "OK. is fine, Certainly! is not" and "be brief." Letting the model
+   * elaborate longer explanations would slow hands-free mode down between
+   * utterances, which defeats the purpose. Helper context (longer text,
+   * settings shortcut, status pulse) lives in the popup UI, not in TTS.
+   */
+  MODE_HANDS_FREE_ON: 'Hands-free mode.',
+
+  /** Spoken feedback when the user reverts to command (push-to-talk) mode. */
+  MODE_COMMAND_ON: 'Command mode.',
+
+  /** Mode switch attempt failed (storage error / race / missing permission). */
+  MODE_SWITCH_FAILED:
+    "I couldn't switch modes. Try opening the extension popup to toggle it manually.",
 } as const;
 
 // ---------------------------------------------------------------------------

@@ -16,8 +16,11 @@ import {
   emptySession,
   defaultProfile,
   detectGoal,
+  detectModeSwitch,
   handleClearCommand,
   handleWhereWasI,
+  nextMode,
+  normalizeMode,
   type SessionState,
   type Turn,
   type StorageBackend,
@@ -546,5 +549,131 @@ describe('profile-based fill (via actions.ts resolveProfileFields)', () => {
     // Cleanup
     document.body.removeChild(container);
     (globalThis as Record<string, unknown>).chrome = originalChrome;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectModeSwitch (Phase J) — voice intent for "switch to hands-free /
+// command mode" — used as a no-LLM fast path in handleCommand and by the
+// Alt+S toggle helper.
+// ---------------------------------------------------------------------------
+
+describe('detectModeSwitch', () => {
+  it('matches "switch to hands-free mode"', () => {
+    expect(detectModeSwitch('switch to hands-free mode')).toBe('hands_free');
+  });
+
+  it('matches just "hands-free" (mode optional in pattern)', () => {
+    expect(detectModeSwitch('hands-free')).toBe('hands_free');
+  });
+
+  it('matches "hands-free mode" without "switch"', () => {
+    expect(detectModeSwitch('hands-free mode')).toBe('hands_free');
+  });
+
+  it('matches "go hands free" with space instead of hyphen', () => {
+    expect(detectModeSwitch('go hands free')).toBe('hands_free');
+  });
+
+  it('matches "enable hands-free mode"', () => {
+    expect(detectModeSwitch('enable hands-free mode')).toBe('hands_free');
+  });
+
+  it('matches "hands free please" (good-to-have pattern)', () => {
+    expect(detectModeSwitch('hands free please')).toBe('hands_free');
+  });
+
+  it('matches "switch to command mode"', () => {
+    expect(detectModeSwitch('switch to command mode')).toBe('command');
+  });
+
+  it('matches just "command mode"', () => {
+    expect(detectModeSwitch('command mode')).toBe('command');
+  });
+
+  it('matches "go back to command" (carries the "back" word)', () => {
+    expect(detectModeSwitch('go back to command')).toBe('command');
+  });
+
+  it('matches "back to normal" (good-to-have pattern)', () => {
+    expect(detectModeSwitch('back to normal')).toBe('command');
+  });
+
+  it('returns null for non-mode-switch transcripts', () => {
+    expect(detectModeSwitch('go to checkout')).toBeNull();
+    expect(detectModeSwitch('add to cart')).toBeNull();
+    expect(detectModeSwitch('read this page')).toBeNull();
+    expect(detectModeSwitch('what is this page')).toBeNull();
+  });
+
+  it('returns null for empty / whitespace transcripts', () => {
+    expect(detectModeSwitch('')).toBeNull();
+    expect(detectModeSwitch('   ')).toBeNull();
+  });
+
+  it('is case-insensitive', () => {
+    expect(detectModeSwitch('SWITCH TO HANDS-FREE MODE')).toBe('hands_free');
+    expect(detectModeSwitch('Command Mode')).toBe('command');
+    expect(detectModeSwitch('BACK TO NORMAL')).toBe('command');
+  });
+
+  it('handles non-string / null / undefined transcripts defensively', () => {
+    // @ts-expect-error — testing runtime defensive behavior
+    expect(detectModeSwitch(null)).toBeNull();
+    // @ts-expect-error — testing runtime defensive behavior
+    expect(detectModeSwitch(undefined)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normalizeMode (Phase J) — defensive validator around user-editable
+// chrome.storage.local['diamond_mode']. Storage is untrusted input.
+// ---------------------------------------------------------------------------
+
+describe('normalizeMode', () => {
+  it('returns DEFAULT_MODE for null', () => {
+    expect(normalizeMode(null)).toBe('command');
+  });
+
+  it('returns DEFAULT_MODE for undefined', () => {
+    expect(normalizeMode(undefined)).toBe('command');
+  });
+
+  it('returns DEFAULT_MODE for non-string values', () => {
+    expect(normalizeMode(42)).toBe('command');
+    expect(normalizeMode(true)).toBe('command');
+    expect(normalizeMode({ mode: 'hands_free' })).toBe('command');
+    expect(normalizeMode(['hands_free'])).toBe('command');
+  });
+
+  it('returns DEFAULT_MODE for unknown / typo strings', () => {
+    expect(normalizeMode('invalid')).toBe('command');
+    expect(normalizeMode('hands-free')).toBe('command'); // hyphen, not underscore
+    expect(normalizeMode('HANDS_FREE')).toBe('command'); // case-sensitive
+  });
+
+  it('returns the actual mode for known values', () => {
+    expect(normalizeMode('command')).toBe('command');
+    expect(normalizeMode('hands_free')).toBe('hands_free');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nextMode (Phase J) — pure helper at the heart of the Alt+S toggle.
+// Involution invariant: nextMode(nextMode(x)) === x.
+// ---------------------------------------------------------------------------
+
+describe('nextMode', () => {
+  it('toggles command -> hands_free', () => {
+    expect(nextMode('command')).toBe('hands_free');
+  });
+
+  it('toggles hands_free -> command', () => {
+    expect(nextMode('hands_free')).toBe('command');
+  });
+
+  it('is involutive (round-trip identity)', () => {
+    expect(nextMode(nextMode('command'))).toBe('command');
+    expect(nextMode(nextMode('hands_free'))).toBe('hands_free');
   });
 });

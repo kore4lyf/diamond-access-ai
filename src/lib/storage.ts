@@ -30,6 +30,19 @@ import * as logger from './logger';
 /** Max conversation turns (1 user + 1 assistant = 1 turn). FIFO when exceeded. */
 export const MAX_TURNS = 10;
 
+/**
+ * Activation mode — determines how Diamond's listening session behaves.
+ *
+ * - 'command': push-to-talk. Each Alt+D / icon click starts ONE recognition
+ *   session; release ends it. Default.
+ * - 'hands_free': one activation + auto-rearm between utterances. Recognition
+ *   stays open so multiple commands can flow without re-pressing. Sleeps
+ *   after 60s of inactivity (the same sleep timeout as command mode).
+ */
+export type DiamondMode = 'command' | 'hands_free';
+export const DEFAULT_MODE: DiamondMode = 'command';
+const VALID_MODES: readonly DiamondMode[] = ['command', 'hands_free'];
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -98,6 +111,61 @@ export function defaultProfile(): UserProfile {
   };
 }
 
+/**
+ * Validate a stored mode value. Returns the mode if it's a known value,
+ * otherwise returns DEFAULT_MODE. Defensive — storage is untrusted input
+ * (chrome.storage.local can be edited by the user from devtools).
+ */
+export function normalizeMode(raw: unknown): DiamondMode {
+  if (typeof raw === 'string' && (VALID_MODES as readonly string[]).includes(raw)) {
+    return raw as DiamondMode;
+  }
+  return DEFAULT_MODE;
+}
+
+// ---------------------------------------------------------------------------
+// Mode-switch voice intent detection (Phase J)
+// ---------------------------------------------------------------------------
+
+/** Phrases that flip activation mode to hands-free. */
+const HF_SWITCH_PATTERNS: readonly RegExp[] = [
+  /\b(?:switch|go|enable|turn\s+on)?\s*(?:to\s+)?hands[\s-]?free(?:\s+mode)?\b/i,
+  /\bhands[\s-]?free\s+please\b/i,
+];
+
+/** Phrases that flip activation mode back to command (push-to-talk). */
+const CMD_SWITCH_PATTERNS: readonly RegExp[] = [
+  /\b(?:switch|go(?: back)?|enable|turn\s+on)?\s*(?:to\s+)?command(?:\s+mode)?\b/i,
+  /\bback\s+to\s+normal\b/i,
+];
+
+/**
+ * Detect a voice request to switch activation mode. Returns the target
+ * mode if matched, null otherwise. Conservative — prefers hands-free
+ * match first because going from command → hands-free is the default
+ * "I want to stop pressing Alt+D" ask.
+ */
+export function detectModeSwitch(transcript: string): DiamondMode | null {
+  const trimmed = String(transcript ?? '').trim();
+  if (!trimmed) return null;
+  for (const pattern of HF_SWITCH_PATTERNS) {
+    if (pattern.test(trimmed)) return 'hands_free';
+  }
+  for (const pattern of CMD_SWITCH_PATTERNS) {
+    if (pattern.test(trimmed)) return 'command';
+  }
+  return null;
+}
+
+/**
+ * Compute the opposite activation mode. Pure helper for the Alt+S toggle
+ * (and any future "flip the mode" code path): no IO, no state, and
+ * involutive — `nextMode(nextMode(x)) === x`.
+ */
+export function nextMode(current: DiamondMode): DiamondMode {
+  return current === 'hands_free' ? 'command' : 'hands_free';
+}
+
 // ---------------------------------------------------------------------------
 // Storage backend interface
 // ---------------------------------------------------------------------------
@@ -114,6 +182,7 @@ export interface StorageBackend {
 
 const SESSION_KEY = 'diamond_session';
 const PROFILE_KEY = 'diamond_profile';
+const MODE_KEY = 'diamond_mode';
 
 // ---------------------------------------------------------------------------
 // Chrome-free core factory
@@ -177,6 +246,20 @@ export function createStorage(store: StorageBackend) {
     /** Overwrite the entire user profile. */
     async setProfile(p: UserProfile): Promise<void> {
       await store.set({ [PROFILE_KEY]: p });
+    },
+
+    // ── Mode (activation style) ──────────────────────────────────────────
+
+    /** Load the current activation mode. Falls back to DEFAULT_MODE. */
+    async getMode(): Promise<DiamondMode> {
+      const result = await store.get([MODE_KEY]);
+      return normalizeMode(result[MODE_KEY]);
+    },
+
+    /** Persist the activation mode. Invalid values are coerced to default. */
+    async setMode(mode: DiamondMode): Promise<void> {
+      const safe = normalizeMode(mode);
+      await store.set({ [MODE_KEY]: safe });
     },
   };
 }
