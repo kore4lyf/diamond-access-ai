@@ -494,6 +494,22 @@ async function activateCommandMode(): Promise<void> {
       await speak(ERRORS.AI_UNAVAILABLE);
     }
   } finally {
+    // PC-PCQ follow-up: when chrome.runtime.sendMessage or
+    // handleResponse throws (e.g. "Extension context invalidated" on
+    // SW restart, or "message channel closed"), the inline
+    // timeEnd('diamond-llm') / timeEnd('diamond-action') calls below
+    // never run — Chrome DevTools keeps the timer label armed. The
+    // next activation calls console.time('diamond-llm') again and
+    // Chrome throws "Timer 'diamond-llm' already exists".
+    //
+    // Defensive cleanup: try each inner timeEnd inside its own
+    // try/catch so Chrome's "Timer does not exist" warning is
+    // swallowed on the success path (where the label was already
+    // ended inline). The outer diamond-command timer ends
+    // unconditionally — it's the only one with the "started once,
+    // ended once" invariant.
+    try { console.timeEnd('diamond-llm'); } catch { /* may not be active */ }
+    try { console.timeEnd('diamond-action'); } catch { /* may not be active */ }
     console.timeEnd('diamond-command');
     isProcessing = false;
   }
