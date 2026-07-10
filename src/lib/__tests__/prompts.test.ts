@@ -48,8 +48,8 @@ describe('PERSONA_BLOCK', () => {
 });
 
 describe('PAGE_LOAD_TASK', () => {
-  it('specifies three spoken lines', () => {
-    expect(PAGE_LOAD_TASK).toMatch(/three spoken lines/);
+  it('specifies two spoken lines', () => {
+    expect(PAGE_LOAD_TASK).toMatch(/two spoken lines/);
   });
 
   it('forbids bullet lists and JSON', () => {
