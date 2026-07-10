@@ -22,6 +22,8 @@
  *   - Response shape validated with runtime checks (strict-mode safe)
  */
 
+import * as logger from './logger';
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -55,6 +57,37 @@ export const FIREWORKS_URL =
  * ─────────────────────────────────────────────────────────────────────
  */
 export const DEV_MODEL_ID = 'accounts/fireworks/models/minimax-m3';
+
+// ---------------------------------------------------------------------------
+// Verbose LLM logging — opt-in PC QA diagnostic
+// ---------------------------------------------------------------------------
+
+/**
+ * Storage key for the developer-facing "dump LLM response bodies" toggle.
+ * When true and the runtime is DEV (Phase L), `callLLMWithRetry` emits a
+ * `logger.debug('llm_response', 'body (verbose)', { text })` line per
+ * successful response so PC QA diagnostics can read what the Fireworks
+ * model actually returned — needed to debug the "page summary reads like
+ * JSON" report (Phase J).
+ *
+ * Default: false. Set via:
+ *   chrome.storage.local.set({ diamond_verbose_llm: true })
+ * in the SW DevTools console. Remove the key to revert. End users of the
+ * production CRX should never need this — the privacy contract still says
+ * LLM bodies are NOT logged by default.
+ */
+const VERBOSE_LLM_KEY = 'diamond_verbose_llm';
+
+/** Read the verbose-LLM flag. Returns false on any failure (privacy default). */
+async function isVerboseLlmOn(): Promise<boolean> {
+  try {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) return false;
+    const r = await chrome.storage.local.get(VERBOSE_LLM_KEY);
+    return r[VERBOSE_LLM_KEY] === true;
+  } catch {
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Response validation (strict-mode safe)
@@ -207,9 +240,23 @@ export async function callLLMWithRetry(
   userMessage: string,
   retries = 1,
 ): Promise<string> {
+  // B1 — verbose mode dumps the actual Fireworks response body for PC QA
+  // diagnostics. We read the flag once at entry (the user won't toggle it
+  // in the middle of a single command's round-trip; if they do, the next
+  // command picks up the new value). logger.debug is auto-no-op in
+  // production (Phase L: IS_DEV gate) so the storage read + emission
+  // happen ONLY in dev builds; production CRX has neither cost nor output.
+  const verboseLlm = await isVerboseLlmOn();
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const raw = await callLLM(systemPrompt, userMessage);
+      if (verboseLlm) {
+        // 'llm_response' category reused so Options -> Diagnostics filter
+        // pulls verbose + non-verbose rows together; the msg prefix
+        // 'body (verbose)' distinguishes them in the stream.
+        logger.debug('llm_response', 'body (verbose)', { text: raw });
+      }
       const parsed = tryParseJSON(raw);
 
       if (parsed) {

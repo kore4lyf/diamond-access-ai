@@ -16,8 +16,14 @@
  *     dev visibility). Single-user device, console-only — never persisted.
  *   - Form values (passwords, CC, SSN, anything filling) are NEVER logged.
  *     Only the field type ("password", "credit-card", etc.) is logged.
- *   - LLM prompt/response bodies are NEVER logged. Only prompt-length, model,
- *     and response-length are logged.
+ *   - LLM prompt/response bodies are NEVER logged by default. Only
+ *     prompt-length, model, and response-length are logged.
+ *     — Phase J + Step B1: an opt-in developer flag
+ *       (`diamond_verbose_llm` in chrome.storage.local) flips
+ *       `callLLMWithRetry` into dumping the actual response body alongside
+ *       the metadata. The flag is off by default; production CRX never
+ *       reads it because the `IS_DEV` gate in this file short-circuits
+ *       `log()` before reaching the logger.debug() call site.
  *
  * Architecture:
  *   - Pure module. No chrome.* imports — usable from background, content,
