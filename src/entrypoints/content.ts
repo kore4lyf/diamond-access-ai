@@ -132,14 +132,32 @@ export default defineContentScript({
         lastActivationSource = 'sw';
         activateDiamond();
       }
-      // Phase J: popup-toggle / voice mode switch sends broadcast.
-      // Stop a running hands-free loop so the change actually takes effect
-      // without requiring the user to utter something to trigger onend.
+      // Phase J: popup-toggle / voice mode switch sends a single-target
+      // dispatch (notifyModeChanged in background.ts). Stop a running
+      // hands-free loop if this tab has one AND the mode is going to
+      // command — that part runs even on hidden tabs because it's just
+      // a teardown, no audio.
       if (msg.type === 'MODE_CHANGED') {
         const next = normalizeMode(msg.mode);
-        logger.info('voice', 'MODE_CHANGED broadcast received', { mode: next });
+        logger.info('voice', 'MODE_CHANGED received', {
+          mode: next,
+          visible: document.visibilityState,
+        });
         if (next === 'command' && isHandsFreeActive()) {
           stopHandsFree();
+        }
+        // ─── ACTIVE-TAB ONLY ───
+        // Defense-in-depth: only the foreground tab audibly speaks the
+        // mode-change announcement. SW already targets a single tab via
+        // notifyModeChanged, but if a stray MODE_CHANGED ever lands on a
+        // background tab (e.g. race condition during tab switch), we
+        // don't want to repeat the announcement.
+        if (document.visibilityState !== 'visible') {
+          logger.info('voice', 'MODE_CHANGED skipped speak in background tab', {
+            mode: next,
+            reason: 'hidden',
+          });
+          return;
         }
         // Persona says "before any action, name the action in plain
         // English" — speaking the new mode name reinforces the change

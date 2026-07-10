@@ -106,7 +106,11 @@ export default defineBackground(() => {
     // logic. The active tab picks up MODE_CHANGED, speaks the new mode
     // name, and stops any running hands-free loop if going to command.
     if (command === 'toggle-diamond-mode') {
-      await toggleModeViaStorage();
+      // chrome.commands.onCommand doesn't carry sender.tab; query active tab
+      // so notifyModeChanged targets the visible tab where the user can hear
+      // the announcement (PC-A-1: N-tab announcement should be N=1).
+      const tabId = await resolveActiveTabId();
+      await toggleModeViaStorage(tabId);
       return;
     }
   });
@@ -114,7 +118,7 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener(
     (
       message: unknown,
-      _sender: chrome.runtime.MessageSender,
+      sender: chrome.runtime.MessageSender,
       sendResponse: (response?: unknown) => void,
     ) => {
       const msg = message as { type?: string; [key: string]: unknown };
@@ -122,7 +126,7 @@ export default defineBackground(() => {
 
       // ── COMMAND: full user command round-trip ───────────────────────────
       if (msg.type === 'COMMAND') {
-        handleCommand(msg, sendResponse);
+        handleCommand(msg, sender, sendResponse);
         return true;
       }
 
@@ -178,10 +182,13 @@ export default defineBackground(() => {
         const requested = normalizeMode((msg as { mode?: unknown }).mode);
         storage
           .setMode(requested)
-          .then(() => {
+          .then(async () => {
             logger.info('storage', 'mode changed', { mode: requested });
             sendResponse({ ok: true, mode: requested });
-            broadcastModeChange(requested).catch(() => {});
+            // Popup-side SET_MODE has no sender.tab (popup is its own
+            // surface). Fall back to active-tab query so the audible
+            // announcement lands in the user's visible tab.
+            await notifyModeChanged(requested, sender.tab?.id);
           })
           .catch((e) => {
             logger.warn('storage', 'SET_MODE failed', {
@@ -205,7 +212,10 @@ export default defineBackground(() => {
       // capture-phase Alt+S listener fires (chrome:// pages, devtools,
       // or any time the manifest binding is suppressed).
       if (msg.type === 'TOGGLE_MODE') {
-        toggleModeViaStorage()
+        // Content-script Alt+S fallback — sender.tab is the tab the user
+        // pressed Alt+S in. Thread it through so notifyModeChanged fires
+        // in that exact tab instead of the SW's "best guess" via query.
+        toggleModeViaStorage(sender.tab?.id)
           .then(() => sendResponse({ ok: true }))
           .catch((e) => {
             logger.warn('storage', 'TOGGLE_MODE failed', {
@@ -235,36 +245,71 @@ export default defineBackground(() => {
 // ---------------------------------------------------------------------------
 
 /**
- * Broadcast a MODE_CHANGED message to every open tab so content scripts
- * can adapt their activation state on the next interaction without a
- * reload. Tabs without a content script (chrome:// pages, the Chrome
- * Web Store, etc.) silently fail — that's expected.
+ * Resolve the tabId to use when no preferredTabId is given to
+ * `notifyModeChanged`. Returns undefined when Chrome can't answer
+ * (test contexts, manifest errors, etc.). The `number | undefined`
+ * shape matches the `sender.tab?.id` chain in callers so the
+ * `toggleModeViaStorage` parameter is uniformly optional.
  *
- * Resolves once all tabs have been fanned out to (best-effort: errors
- * are swallowed per-tab). Never throws.
+ * Used by:
+ *  - `chrome.commands.onCommand` 'toggle-diamond-mode' (Alt+S manifest;
+ *    command dispatch doesn't carry sender.tab).
+ *  - `onMessage SET_MODE` (from popup — popup is its own surface, no
+ *    sender.tab).
  */
-async function broadcastModeChange(mode: ReturnType<typeof normalizeMode>): Promise<void> {
+async function resolveActiveTabId(): Promise<number | undefined> {
   try {
-    const tabs = await chrome.tabs.query({});
-    for (const tab of tabs) {
-      if (tab.id != null) {
-        chrome.tabs
-          .sendMessage(tab.id, { type: 'MODE_CHANGED', mode })
-          .catch(() => undefined);
-      }
-    }
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab?.id;
   } catch {
-    // chrome.tabs.query not available in some test contexts — no-op.
+    return undefined;
   }
 }
 
 /**
- * Phase J: Toggle the persisted activation mode and broadcast it.
+ * Single-target MODE_CHANGED dispatch. Only the user's *active* tab
+ * audibly announces the mode change ("Hands-free mode." / "Command mode.").
+ * Non-active tabs sync state silently via `chrome.storage.onChanged`
+ * (see `activateDiamond()` in content.ts) — they don't need a message
+ * because storage fires on every listener.
+ *
+ * Phase J fix for PC-A-1: the earlier `broadcastModeChange` queried every
+ * open tab and produced a 1-N repeat of the announcement (N = number of
+ * open tabs + 1 each toggle). The fix is single-target semantic.
+ *
+ * Tabs without a content script (chrome:// pages, the Chrome Web Store,
+ * etc.) silently fail — that's expected. Quietly no-op rather than throw.
+ */
+async function notifyModeChanged(
+  mode: ReturnType<typeof normalizeMode>,
+  preferredTabId?: number,
+): Promise<void> {
+  const tabId =
+    typeof preferredTabId === 'number' && preferredTabId >= 0
+      ? preferredTabId
+      : await resolveActiveTabId();
+  if (tabId == null) {
+    logger.warn('storage', 'no active tab to notify mode change', { mode });
+    return;
+  }
+  logger.info('voice', 'MODE_CHANGED dispatching to tab', { mode, tabId });
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'MODE_CHANGED', mode });
+  } catch {
+    // chrome:// pages / Web Store don't have a content script — silent.
+  }
+}
+
+/**
+ * Phase J: Toggle the persisted activation mode and notify the active
+ * tab. `preferredTabId` is the originating tabId when available
+ * (TOGGLE_MODE content-script fallback carries `sender.tab.id`); for
+ * Alt+S manifest path the caller passes `await resolveActiveTabId()`.
  *
  * Both entry paths funnel through this helper so the logic lives in one
  * place: `chrome.commands.onCommand` for `toggle-diamond-mode` (Alt+S via
  * the manifest binding), and the content-script Alt+S keydown fallback
- * that forwards as a `TOGGLE_MODE` message. The MODE_CHANGED broadcast
+ * that forwards as a `TOGGLE_MODE` message. The MODE_CHANGED dispatch
  * triggers two reactions in the active tab:
  *
  *   1. Content script speaks the new mode name (`ERRORS.MODE_*_ON`).
@@ -274,13 +319,13 @@ async function broadcastModeChange(mode: ReturnType<typeof normalizeMode>): Prom
  * Returns silently on failure — caller can decide whether to surface
  * the error (the SW handler currently doesn't, the message handler logs).
  */
-async function toggleModeViaStorage(): Promise<void> {
+async function toggleModeViaStorage(preferredTabId?: number): Promise<void> {
   try {
     const current = await storage.getMode();
     const flipped = nextMode(current);
     await storage.setMode(flipped);
     logger.info('storage', 'mode toggled', { from: current, to: flipped });
-    await broadcastModeChange(flipped);
+    await notifyModeChanged(flipped, preferredTabId);
   } catch (e) {
     logger.warn('storage', 'toggle mode failed', {
       err: e instanceof Error ? e.message : String(e),
@@ -305,6 +350,7 @@ async function toggleModeViaStorage(): Promise<void> {
  */
 async function handleCommand(
   msg: Record<string, unknown>,
+  sender: chrome.runtime.MessageSender,
   sendResponse: (response?: unknown) => void,
 ): Promise<void> {
   const sw = new logger.Stopwatch('command', 'COMMAND round-trip');
@@ -362,7 +408,9 @@ async function handleCommand(
         logger.info('storage', 'mode switched via voice command', {
           mode: modeSwitch,
         });
-        await broadcastModeChange(modeSwitch);
+        // Voice fast-path: sender.tab is the tab the user spoke into.
+        // Notify that exact tab so the announcement plays once, not N.
+        await notifyModeChanged(modeSwitch, sender.tab?.id);
         const reply =
           modeSwitch === 'hands_free'
             ? ERRORS.MODE_HANDS_FREE_ON
