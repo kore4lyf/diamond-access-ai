@@ -68,7 +68,15 @@ export default defineContentScript({
         : '';
     if (!url) return;
 
-    // PAGE_LOAD: build snapshot and send to background for auto-summary
+    // PAGE_LOAD: build snapshot and send to background for auto-summary,
+    // but ONLY after the tab is actually visible. On a Chrome session
+    // restore, Chrome fires `document_idle` for every tab while they're
+    // hidden and then switches focus to the previously-active tab.
+    // Without this gate, a 6-tab restore produces 6 back-to-back `speak()`
+    // calls for tabs the user is not on — real UX bug reported on PC-V-1.
+    // Defer the LLM/page-summary call until the tab is visible; the
+    // listener removes itself after firing once so we don't re-summarize
+    // on every subsequent hide/show cycle within the same page lifetime.
     const snap = buildPageSnapshot();
     logger.debug('page_load', 'snapshot built', {
       url,
@@ -76,24 +84,45 @@ export default defineContentScript({
       interactiveCount: snap.elements.length,
     });
 
-    chrome.runtime
-      .sendMessage({
-        type: 'PAGE_LOAD',
+    const sendPageLoadSummary = () => {
+      chrome.runtime
+        .sendMessage({
+          type: 'PAGE_LOAD',
+          url,
+          structure: snap.structure,
+        })
+        .then((response) => {
+          const resp = response as { summary?: string } | undefined;
+          if (resp?.summary) {
+            logger.info('tts', 'PAGE_LOAD summary spoken', {
+              length: resp.summary.length,
+            });
+            speak(resp.summary);
+          }
+        })
+        .catch(() => {
+          // Service worker may not be awake — silent fallback
+        });
+    };
+
+    if (document.visibilityState === 'visible') {
+      // Active tab — summarize immediately (existing Phase E behaviour).
+      sendPageLoadSummary();
+    } else {
+      // Tab is hidden — almost certainly Chrome session restore or a
+      // backgrounded new tab (middle-click, "open in background"). Wait
+      // until the user actually brings the tab forward before speaking.
+      logger.info('page_load', 'deferred — tab not visible', {
+        visibilityState: document.visibilityState,
         url,
-        structure: snap.structure,
-      })
-      .then((response) => {
-        const resp = response as { summary?: string } | undefined;
-        if (resp?.summary) {
-          logger.info('tts', 'PAGE_LOAD summary spoken', {
-            length: resp.summary.length,
-          });
-          speak(resp.summary);
-        }
-      })
-      .catch(() => {
-        // Service worker may not be awake — silent fallback
       });
+      const onVisible = () => {
+        document.removeEventListener('visibilitychange', onVisible);
+        logger.info('page_load', 'visibility restored — sending now', { url });
+        sendPageLoadSummary();
+      };
+      document.addEventListener('visibilitychange', onVisible);
+    }
 
     // Phase D/E/F: listen for `ACTIVATE` from the service worker
     // (triggered by chrome.commands.onCommand for Ctrl+Shift+D / Alt+Shift+D).

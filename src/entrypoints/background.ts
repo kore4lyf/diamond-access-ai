@@ -75,6 +75,14 @@ export default defineBackground(() => {
 
   // Phase D: Alt+D keyboard shortcut → tell the content script to wake up
   chrome.commands.onCommand.addListener(async (command) => {
+    // Single source of truth for "user pressed a manifest-bound shortcut".
+    // PC-A-1 reads the log stream to discriminate Alt+D vs Alt+Shift+D vs
+    // Ctrl+Shift+D vs Alt+S — without this entry log they all converge on
+    // either tab.sendMessage('ACTIVATE') or toggleModeViaStorage() and the
+    // dispatch disappears in the SW. Tag at info so it survives default
+    // DebugAndLog level filtering in production.
+    logger.info('command', 'manifest command received', { command });
+
     if (
       command === 'activate-diamond' ||
       command === 'activate-diamond-alt'

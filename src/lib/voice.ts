@@ -54,9 +54,36 @@ let activeRecognition: SpeechRecognition | null = null;
 /** True while a hands-free session is active (continuous listening loop). */
 let handsFreeActive = false;
 
+/**
+ * Stopwatch tracking the full hands-free session lifecycle (startHandsFree
+ * entry → exit by stopHandsFree / mic-blocked / max-restarts / reject
+ * callback). PC-HF-1 / PC-HF-2 read this to confirm "one Alt+D arms the
+ * loop, multiple utterances flow without re-press, 60 s of silence
+ * cleanly wraps." Reset on stop so a new session starts a fresh timer.
+ */
+let handsFreeStopwatch: logger.Stopwatch | null = null;
+
 /** Restart counter — guards against tight error-restart loops. */
 let handsFreeRestartCount = 0;
 const HANDS_FREE_MAX_RESTARTS_WITHOUT_RESULT = 8;
+
+/**
+ * Centralized teardown for the hands-free session. Used at every spot
+ * where we'd otherwise write `handsFreeActive = false;` directly so the
+ * session-duration stopwatch cleans up symmetrically — no orphan timers
+ * if we crash out of armOnce or hit a non-recoverable recognizer error.
+ *
+ * @param reason - Short tag for the stopwatch stop log ("user-stopped",
+ *   "mic-blocked", "max-restarts", "callback-rejected", "start-threw",
+ *   etc). Goes into logcat as the stop reason.
+ */
+function clearHandsFreeSession(reason: string): void {
+  if (handsFreeStopwatch) {
+    handsFreeStopwatch.stop(reason);
+    handsFreeStopwatch = null;
+  }
+  handsFreeActive = false;
+}
 
 // ---------------------------------------------------------------------------
 // Audio cues (beeps)
@@ -354,6 +381,16 @@ export function startHandsFree(
 
   handsFreeActive = true;
   handsFreeRestartCount = 0;
+  // Start a fresh session stopwatch. PC-HF-1 verifies the timer runs from
+  // here through the entire loop; PC-HF-2 verifies the stop reason path.
+  // If a previous stopwatch is somehow still alive (recovery from a
+  // crash-out that didn't reach clearHandsFreeSession), close it out
+  // first so we never leak an orphan timer.
+  if (handsFreeStopwatch) {
+    handsFreeStopwatch.stop('recovery-on-resume');
+    handsFreeStopwatch = null;
+  }
+  handsFreeStopwatch = new logger.Stopwatch('voice', 'hands-free session');
 
   playBeep('awake');
   logger.info('voice', 'hands-free started');
@@ -368,7 +405,7 @@ export function startHandsFree(
       logger.error('voice', 'failed to construct recognition in hands-free', {
         err: e instanceof Error ? e.message : String(e),
       });
-      handsFreeActive = false;
+      clearHandsFreeSession('construct-failed');
       return;
     }
 
@@ -446,12 +483,12 @@ export function startHandsFree(
       }
       if (error === 'not-allowed' || error === 'service-not-allowed') {
         speak(ERRORS.MIC_BLOCKED);
-        handsFreeActive = false;
+        clearHandsFreeSession('mic-blocked');
         return;
       }
       if (error === 'network') {
         speak(ERRORS.STT_NETWORK);
-        handsFreeActive = false;
+        clearHandsFreeSession('network');
         return;
       }
       // Unknown / abort — auto-restart will pick it up if arms remain.
@@ -461,7 +498,7 @@ export function startHandsFree(
           'hands-free aborting after too many restarts without result',
         );
         speak(ERRORS.STT_OTHER);
-        handsFreeActive = false;
+        clearHandsFreeSession('max-restarts');
       }
     };
 
@@ -485,7 +522,7 @@ export function startHandsFree(
       logger.warn('voice', 'hands-free start() threw', {
         err: e instanceof Error ? e.message : String(e),
       });
-      handsFreeActive = false;
+      clearHandsFreeSession('start-threw');
     }
   };
 
@@ -500,7 +537,10 @@ export function startHandsFree(
 export function stopHandsFree(): void {
   if (!handsFreeActive) return;
 
-  handsFreeActive = false;
+  // Log session duration BEFORE the secondary info log so the STOP log
+  // (with ms timer) lands first in the stream — easier to find when
+  // scanning for "how long did that hands-free session run."
+  clearHandsFreeSession('user-stopped');
   logger.info('voice', 'hands-free stopping');
 
   const r = activeRecognition;
