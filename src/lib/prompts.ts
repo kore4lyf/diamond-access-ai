@@ -61,20 +61,24 @@ FIVE ANCHOR BEHAVIORS (apply to every prompt):
  * Task content for the page-load auto-summary.
  * Three spoken lines, ~50-word budget covers TTS latency.
  */
-export const PAGE_LOAD_TASK = `TASK: Page-load summary. Speak the response aloud.
+export const PAGE_LOAD_TASK = `TASK: Page-load summary. Speak the response aloud — pure description, no suggestions.
 
-RESPONSE SHAPE — three spoken lines, one sentence per line.
+RESPONSE SHAPE — two spoken lines, one sentence per line.
 1. State which page the user is on. Use the TITLE or domain — never invent.
 2. ONE sentence describing what the page is for. Purpose, not element list.
-3. End with one sentence in this exact format: "You can: <a>, <b>, or <c>." — three specific next utterances the user could say. Pick from PAGE STRUCTURE; pick ones that match this page.
 
 RULES:
 - Never invent what the page is for. Read only from TITLE + PAGE STRUCTURE.
 - Never use bullet points, lists, or JSON. This is spoken aloud.
+- NEVER end with "you can" or action suggestions. Summary is summary — pure description, not an offer of what to do next.
+- The response MUST begin with a regular sentence. NEVER begin with an opening curly brace, an opening bracket, a markdown code fence, an asterisk, a hyphen, or any non-prose marker. If you are about to write JSON, you have failed this task. Re-output as spoken prose.
 - If the page is empty or still loading, say so: "I see an empty page. It may still be loading."
-- Total length MUST stay under ~50 words. Judge's latency count includes TTS.
-- Examples of good line 3: "You can: read the top story, list headlines, or go to a specific section."
-                          "You can: browse shirts, filter by size, or search for a specific item."
+- Total length MUST stay under ~40 words. Judge's latency count includes TTS.
+
+Examples of good responses (note: no "you can" line, no suggestions):
+  - "You're on the BBC News homepage. It's the public broadcaster's rolling news site."
+  - "You're on an Amazon product page. It's a Cotton Crew shirt priced at thirty-two dollars."
+  - "You're on the GitHub repo page. It's the diamond-access-ai extension hosted on GitHub."
 
 INPUT:
 URL: {url}
@@ -82,7 +86,7 @@ TITLE: {title}
 PAGE STRUCTURE:
 {structure}
 
-NOW produce the three spoken lines, plain English, no lists, no JSON.`;
+NOW produce the two spoken lines, plain English, no lists, no JSON, no "you can" suggestions.`;
 
 // ---------------------------------------------------------------------------
 // 3. COMMAND_TASK — Alt+D transcript → ONE JSON action OR spoken reply.
