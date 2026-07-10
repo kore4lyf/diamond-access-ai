@@ -89,6 +89,60 @@ async function isVerboseLlmOn(): Promise<boolean> {
   }
 }
 
+/* ── Verbose LLM sink (bypasses logger.ts IS_DEV gate) ────────────── *
+ * When the user opts in via `diamond_verbose_llm=true`, the body of the
+ * LLM reply MUST reach a sink they can review — even on a production
+ * CRX where the `logger.debug` IS_DEV gate would otherwise silence it.
+ * Two destinations:
+ *   (a) SW DevTools console — `console.log` is never IS_DEV-gated.
+ *   (b) Persistent chrome.storage.local buffer — Options page reads,
+ *       formats, and offers copy/download so the user can review past
+ *       LLM responses across reloads.
+ * Failures are silent; a logging write must never break a real reply.
+ * ────────────────────────────────────────────────────────────────── */
+const VERBOSE_BUFFER_KEY = 'diamond_verbose_log_buffer';
+const VERBOSE_BUFFER_MAX = 50;
+const VERBOSE_PROMPT_TRUNCATE = 400;
+const VERBOSE_RAW_TRUNCATE = 8000;
+
+async function captureVerboseLLMBody(
+  raw: string,
+  systemPrompt: string,
+  userMessage: string,
+  attempt: number,
+): Promise<void> {
+  // (a) SW DevTools console — single multi-line marker
+  // eslint-disable-next-line no-console
+  console.log(
+    '[Diamond VERBOSE LLM] attempt=' + attempt +
+      '\nsystem: ' + String(systemPrompt || '').slice(0, VERBOSE_PROMPT_TRUNCATE) +
+      '\nuser: '   + String(userMessage  || '').slice(0, VERBOSE_PROMPT_TRUNCATE) +
+      '\nraw: '    + String(raw         || ''),
+  );
+
+  // (b) Persistent storage — capped at 50 entries, oldest evicted first.
+  try {
+    if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
+    const stored = await chrome.storage.local.get(VERBOSE_BUFFER_KEY);
+    const buf: Array<Record<string, unknown>> = Array.isArray(
+      stored[VERBOSE_BUFFER_KEY],
+    )
+      ? (stored[VERBOSE_BUFFER_KEY] as Array<Record<string, unknown>>)
+      : [];
+    buf.push({
+      ts: Date.now(),
+      attempt,
+      systemPrompt: String(systemPrompt || '').slice(0, VERBOSE_RAW_TRUNCATE),
+      userMessage:  String(userMessage  || '').slice(0, VERBOSE_PROMPT_TRUNCATE),
+      raw:          String(raw         || '').slice(0, VERBOSE_RAW_TRUNCATE),
+    });
+    while (buf.length > VERBOSE_BUFFER_MAX) buf.shift();
+    await chrome.storage.local.set({ [VERBOSE_BUFFER_KEY]: buf });
+  } catch {
+    /* silent — never let logging break a real LLM reply */
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Response validation (strict-mode safe)
 // ---------------------------------------------------------------------------
@@ -252,10 +306,11 @@ export async function callLLMWithRetry(
     try {
       const raw = await callLLM(systemPrompt, userMessage);
       if (verboseLlm) {
-        // 'llm_response' category reused so Options -> Diagnostics filter
-        // pulls verbose + non-verbose rows together; the msg prefix
-        // 'body (verbose)' distinguishes them in the stream.
-        logger.debug('llm_response', 'body (verbose)', { text: raw });
+        // The user opted in via `diamond_verbose_llm=true`. The body MUST
+        // reach a sink they can review — even on a production CRX where
+        // logger.debug's IS_DEV gate would silence the existing emission.
+        // Two destinations: SW DevTools console + persistent storage buffer.
+        await captureVerboseLLMBody(raw, systemPrompt, userMessage, attempt);
       }
       const parsed = tryParseJSON(raw);
 

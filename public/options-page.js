@@ -127,4 +127,99 @@
       }
     });
   }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Verbose LLM response log — read from chrome.storage.local
+  // (sink: src/lib/fireworks.ts captureVerboseLLMBody). The diamond_verbose_llm
+  // opt-in flag enables this sink; production CRX without that flag never
+  // writes anything here. Refreshing / copying / downloading all read the
+  // same key the SW writes.
+  // ─────────────────────────────────────────────────────────────────────
+  var refreshVerboseBtn  = document.getElementById('refresh-verbose-btn');
+  var copyVerboseBtn     = document.getElementById('copy-verbose-btn');
+  var downloadVerboseBtn = document.getElementById('download-verbose-btn');
+  var clearVerboseBtn    = document.getElementById('clear-verbose-btn');
+  var verbosePre         = document.getElementById('verbose-pre');
+
+  async function fetchVerboseBuffer() {
+    if (!verbosePre) return [];
+    try {
+      var stored = await chrome.storage.local.get('diamond_verbose_log_buffer');
+      var buf = Array.isArray(stored.diamond_verbose_log_buffer)
+        ? stored.diamond_verbose_log_buffer
+        : [];
+      if (buf.length === 0) {
+        verbosePre.textContent =
+          '(no verbose entries — set diamond_verbose_llm=true and use Diamond)';
+        return [];
+      }
+      var lines = buf.map(function (e) {
+        var when = new Date(e.ts || Date.now())
+          .toISOString()
+          .replace('T', ' ')
+          .slice(0, 19);
+        return (
+          '\u2500\u2500 ' + when + ' attempt=' + (e.attempt == null ? '?' : e.attempt) + ' \u2500\u2500\n' +
+          'system: ' + String(e.systemPrompt || '').slice(0, 240) + '\n' +
+          'user: '   + String(e.userMessage  || '').slice(0, 240) + '\n' +
+          'raw:\n'   + String(e.raw         || '')
+        );
+      });
+      verbosePre.textContent = lines.join('\n\n');
+      return buf;
+    } catch (err) {
+      verbosePre.textContent =
+        'Could not read verbose log: ' +
+        (err && err.message ? err.message : String(err));
+      return [];
+    }
+  }
+
+  if (refreshVerboseBtn) {
+    refreshVerboseBtn.addEventListener('click', function () {
+      fetchVerboseBuffer();
+    });
+  }
+  if (copyVerboseBtn) {
+    copyVerboseBtn.addEventListener('click', async function () {
+      var buf = await fetchVerboseBuffer();
+      try {
+        await navigator.clipboard.writeText(JSON.stringify(buf, null, 2));
+        setStatus('Verbose log copied (JSON).', 'ok');
+      } catch (err) {
+        setStatus(
+          'Copy failed: ' + (err && err.message ? err.message : String(err)),
+          'err',
+        );
+      }
+    });
+  }
+  if (downloadVerboseBtn) {
+    downloadVerboseBtn.addEventListener('click', async function () {
+      var buf = await fetchVerboseBuffer();
+      var blob = new Blob([JSON.stringify(buf, null, 2)], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download =
+        'diamond-verbose-log-' + new Date().toISOString().slice(0, 10) + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+  if (clearVerboseBtn) {
+    clearVerboseBtn.addEventListener('click', async function () {
+      try {
+        await chrome.storage.local.remove('diamond_verbose_log_buffer');
+        if (verbosePre) verbosePre.textContent = '(cleared)';
+        setStatus('Verbose log buffer cleared.', 'ok');
+      } catch (err) {
+        setStatus(
+          'Could not clear verbose log: ' +
+            (err && err.message ? err.message : String(err)),
+          'err',
+        );
+      }
+    });
+  }
 })();

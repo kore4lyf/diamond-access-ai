@@ -148,6 +148,25 @@
       <pre id="logs-pre" style="margin-top: 14px; padding: 12px 14px; max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: rgba(0, 0, 0, 0.04); font-family: ui-monospace, 'Cascadia Mono', 'Roboto Mono', monospace; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; color: var(--fg);"></pre>
     </details>
 
+    <details class="diag-block" style="margin-top: 18px;">
+      <summary style="cursor: pointer; font-weight: 600; padding: 8px 0; color: var(--fg);">Verbose LLM response log</summary>
+      <p class="hint" style="margin-top: 8px;">
+        When <code>diamond_verbose_llm=true</code>, each LLM response body is captured here (last <strong>50</strong>, capped). Useful for diagnosing what the model actually emitted vs. what the prompt expected. Survives Chromium restarts.
+        <br />
+        <strong>Enable from SW DevTools console:</strong>
+        <code style="font-family: ui-monospace, monospace; background: rgba(0,0,0,0.06); padding: 1px 6px; border-radius: 3px;">await chrome.storage.local.set({ diamond_verbose_llm: true })</code>
+        <br />
+        <strong>Privacy:</strong> this panel only shows anything when <em>you</em> set the opt-in key. Real users never see a body here.
+      </p>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px;">
+        <button id="refresh-verbose-btn" type="button">Refresh</button>
+        <button id="copy-verbose-btn" type="button" style="background: transparent; color: var(--fg-muted); border: 1px solid var(--border); font-weight: 500;">Copy JSON</button>
+        <button id="download-verbose-btn" type="button" style="background: transparent; color: var(--fg-muted); border: 1px solid var(--border); font-weight: 500;">Download JSON</button>
+        <button id="clear-verbose-btn" type="button" style="background: transparent; color: var(--fg-muted); border: 1px solid var(--border); font-weight: 500;">Clear buffer</button>
+      </div>
+      <pre id="verbose-pre" style="margin-top: 14px; padding: 12px 14px; max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; background: rgba(0, 0, 0, 0.04); font-family: ui-monospace, 'Cascadia Mono', 'Roboto Mono', monospace; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; color: var(--fg);"></pre>
+    </details>
+
     <!--
       MV3 CSP is `script-src 'self'` — inline scripts are blocked unless
       the manifest allows `'unsafe-inline'` or pins the script's sha256.
