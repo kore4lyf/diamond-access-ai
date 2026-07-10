@@ -17,6 +17,15 @@
  * This keeps dom-walk.ts untouched (Phase B tests stay green).
  * The walk logic for element collection is replicated internally
  * to guarantee consistent traversal order.
+ *
+ * IMPLEMENTED IMAGE INDEXING (PC-QA-PC-X-IMG-PR):
+ *   IMG elements with meaningful alt text get elementIndex now.
+ *   Earlier: IMG was filtered out, so the LLM could not reference
+ *   cover photos, hero images, or product images by index, and
+ *   describe_image fired zero times on news/retail pages that
+ *   carry real captions.
+ *   Now: an <img> with non-empty alt is interactive for indexing
+ *   purposes only. We do not click or hover it — only describe it.
  */
 
 import { extractPageStructureFromRoot } from './dom-walk';
@@ -53,7 +62,10 @@ function shouldSkipElement(el: Element): boolean {
     // Gracefully handle invalid selectors
   }
 
-  // IMG: only include if it has non-empty alt text
+  // IMG: previously skipped unless alt was present. Now: include if
+  // non-empty alt — interactive elements[] needs <img> for describe_image
+  // to fire (PC-X-IMG-PR). Decorative images (alt="" or missing) stay
+  // skipped so list_images() doesn't pull trash.
   if (el.tagName === 'IMG') {
     const alt = el.getAttribute('alt');
     return alt === null || alt === undefined || alt.trim() === '';
@@ -72,6 +84,7 @@ function shouldSkipElement(el: Element): boolean {
 const IMPLICIT_ROLES: Record<string, string | ((el: Element) => string | null)> = {
   A: (el: Element) => ((el as HTMLAnchorElement).href ? 'link' : null),
   BUTTON: 'button',
+  IMG: 'img',  // PC-X-IMG-PR: image role so <img> with alt gets elementIndex
   INPUT: (el: Element) => {
     const type = (el as HTMLInputElement).type?.toLowerCase() ?? 'text';
     const map: Record<string, string> = {
@@ -122,13 +135,25 @@ const INTERACTIVE_ROLES = new Set([
 ]);
 
 function isInteractive(el: Element, roleDisplay: string): boolean {
-  // Tag-based: all listed tags are interactive (A requires href)
+  // Tag-based: all listed tags are interactive (A requires href, IMG
+  // requires meaningful alt — which is gated by shouldSkipElement
+  // upstream too, so we don't double-skip alt-less <img> here).
   if (INTERACTIVE_TAGS.has(el.tagName)) {
     if (el.tagName === 'A') {
       const href = (el as HTMLAnchorElement).href;
       return href !== undefined && href !== '';
     }
     return true;
+  }
+
+  // IMG: PC-X-IMG-PR. Page-snapshot now indexes <img> elements with
+  // non-empty alt so describe_image has elementIndex to fire on. <img>
+  // isn't traditionally "interactive" (we don't click it) but the LLM
+  // needs an index to act on it. Cross-checked upstream in
+  // shouldSkipElement so alt-less images never reach this branch.
+  if (el.tagName === 'IMG') {
+    const alt = el.getAttribute('alt');
+    return !!alt && alt.trim().length > 0;
   }
 
   // Role-based (for div[role="button"], etc.)
@@ -177,8 +202,12 @@ function collectInteractiveElements(root: Element): HTMLElement[] {
  *   [button] "Add to cart" → target
  *   [link] "Home"
  *   [textbox] "Search" | value=""
+ *   [img] "Cover photo"     ← PC-X-IMG-PR: image lines get indexed now
+ *
+ * 'img' is here despite not being classically interactive because
+ * describe_image needs elementIndex to fire on a specific <img>.
  */
-const INTERACTIVE_LINE_RE = /^\s*\[(button|link|textbox|searchbox|checkbox|radio|slider|spinbutton|listbox|combobox|menuitem|tab|switch)\]/;
+const INTERACTIVE_LINE_RE = /^\s*\[(button|link|textbox|searchbox|checkbox|radio|slider|spinbutton|listbox|combobox|menuitem|tab|switch|img)\]/;
 
 function isInteractiveLine(line: string): boolean {
   return INTERACTIVE_LINE_RE.test(line);

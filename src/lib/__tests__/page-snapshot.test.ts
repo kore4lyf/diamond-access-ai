@@ -382,3 +382,83 @@ describe('isSparseDOM', () => {
     expect(isSparseDOM(root)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// IMG indexing (Phase J + describe_image — Round 2 PC-X-IMG-PR)
+// ---------------------------------------------------------------------------
+
+describe('buildPageSnapshot — IMG indexing', () => {
+  it('indexes <img> with non-empty alt in elements[]', () => {
+    const root = fixture(`
+      <a href="/article">Read more</a>
+      <img src="https://example.com/cover.jpg" alt="Cover photo of mountains">
+    `);
+    const snap = buildPageSnapshot(root);
+    expect(snap.elements.length).toBe(2);
+    // elements[0] is the link, elements[1] is the IMG
+    expect(snap.elements[0].tagName).toBe('A');
+    expect(snap.elements[1].tagName).toBe('IMG');
+    expect(snap.elements[1].getAttribute('alt')).toBe('Cover photo of mountains');
+  });
+
+  it('skips <img> without alt (decorative images stay non-interactive)', () => {
+    const root = fixture(`
+      <a href="/article">Read more</a>
+      <img src="https://example.com/decoration.svg" alt="">
+    `);
+    const snap = buildPageSnapshot(root);
+    expect(snap.elements.length).toBe(1);
+    expect(snap.elements[0].tagName).toBe('A');
+  });
+
+  it('skips <img> with missing alt attribute', () => {
+    const root = fixture(`
+      <a href="/x">Link</a>
+      <img src="https://example.com/x.jpg">
+    `);
+    const snap = buildPageSnapshot(root);
+    expect(snap.elements.length).toBe(1);
+  });
+
+  it('outputs [N] prefix on <img> line in structure text', () => {
+    const root = fixture(`
+      <img src="https://example.com/cover.jpg" alt="Cover photo">
+    `);
+    const snap = buildPageSnapshot(root);
+    expect(snap.structure).toMatch(/^\[1\]\s*\[img\]\s*"Cover photo"/m);
+  });
+
+  it('indexes multiple images in DOM order', () => {
+    const root = fixture(`
+      <img src="a.jpg" alt="First photo">
+      <img src="b.jpg" alt="Second photo">
+      <img src="c.jpg" alt="Third photo">
+    `);
+    const snap = buildPageSnapshot(root);
+    expect(snap.elements.length).toBe(3);
+    for (let i = 0; i < 3; i++) {
+      expect(snap.elements[i].tagName).toBe('IMG');
+    }
+    expect(snap.elements[0].getAttribute('alt')).toBe('First photo');
+    expect(snap.elements[1].getAttribute('alt')).toBe('Second photo');
+    expect(snap.elements[2].getAttribute('alt')).toBe('Third photo');
+  });
+
+  it('mixed links and images share a single indexing sequence', () => {
+    const root = fixture(`
+      <a href="/about">About</a>
+      <img src="hero.jpg" alt="Hero banner">
+      <button>Sign up</button>
+      <img src="logo.jpg" alt="Company logo">
+      <a href="/contact">Contact</a>
+    `);
+    const snap = buildPageSnapshot(root);
+    expect(snap.elements.length).toBe(5);
+    // elementIndex 1 → A, 2 → IMG, 3 → BUTTON, 4 → IMG, 5 → A
+    expect(snap.elements[0].tagName).toBe('A');
+    expect(snap.elements[1].tagName).toBe('IMG');
+    expect(snap.elements[2].tagName).toBe('BUTTON');
+    expect(snap.elements[3].tagName).toBe('IMG');
+    expect(snap.elements[4].tagName).toBe('A');
+  });
+});
