@@ -333,18 +333,30 @@ export function navigateAction(url: string): string {
  * Set by backAction so forwardAction knows there's something to go
  * forward to. Cleared by forwardAction when it fires successfully.
  *
- * PC-VLOG follow-up (window.name persistence):
- *   Naive module-level state does NOT survive the page navigation that
- *   history.back() triggers — the new page's content script instance
- *   re-initializes `let lastActionWasBack = false`. So even when the
- *   user did "go back, then go forwards" inside one Diamond session,
- *   forwardAction on the new page would see `lastActionWasBack` as
- *   false and incorrectly report "no next page."
+ * PC-NAVAPI follow-up (use the browser, not your own stack):
+ *   The cleanest answer to "is there a back/forward page?" is to
+ *   query the browser — the Navigation API
+ *      window.navigation.currentEntry.index
+ *      window.navigation.entries().length
+ *   tells us exactly where the user is in their tab's history stack,
+ *   and stays correct after ANY navigation: Diamond-driven back/
+ *   forward, browser-driven back/forward, link clicks,
+ *   location.assign, etc. No re-implementation of state required.
  *
- *   Chrome `window.name` is the standard platform-level workaround —
- *   it persists across same-tab navigations (history.back, history.
- *   forward, link clicks, location.assign, etc.) and is fresh on
- *   new tabs/windows. Use it as the persistence layer.
+ *   For Chrome pre-102 (or sandboxed contexts without Navigation
+ *   API) we fall back to:
+ *     - back: history.length > 1
+ *     - forward: our own window.name flag (only set right after our
+ *       own backAction — conservative: only permits forward when we
+ *       know we just came from a back we performed).
+ *
+ *   Naive module-level `let lastActionWasBack` would NOT survive
+ *   the page navigation that history.back() triggers — the new
+ *   page's content script re-initializes the variable. window.name
+ *   is the standard platform-level workaround — it persists across
+ *   same-tab navigations and is fresh on new tabs/windows. The
+ *   Navigation API is preferred because the browser gives us the
+ *   answer directly with no extension-side bookkeeping.
  */
 const WINDOW_NAME_BACK = 'diamond_last_back';
 
@@ -369,14 +381,57 @@ function writeBackFlag(on: boolean): void {
 }
 
 /**
+ * Read the browser's Navigation API when available.
+ *
+ * Returns `null` if `window.navigation` isn't supported (Chrome pre-102
+ * or restricted contexts like sandboxed iframes). The fallback paths
+ * (`canGoBack` / `canGoForward`) handle that gracefully.
+ */
+function readNavIndex(): { index: number; total: number } | null {
+  try {
+    const nav = (window as unknown as {
+      navigation?: { currentEntry?: { index?: number }; entries?: () => Array<unknown> };
+    }).navigation;
+    if (!nav || typeof nav.entries !== 'function') return null;
+    const total = nav.entries().length;
+    const index = nav.currentEntry?.index ?? -1;
+    return { index, total };
+  } catch {
+    return null;
+  }
+}
+
+function canGoBack(): boolean {
+  const info = readNavIndex();
+  if (info) return info.index > 0;
+  // Fallback: prior entries exist in tab history.
+  return history.length > 1;
+}
+
+function canGoForward(): boolean {
+  const info = readNavIndex();
+  if (info) return info.index < info.total - 1;
+  // Fallback: only if WE just performed a back in this tab. The
+  // browser doesn't expose forward availability via history.length,
+  // so this is the conservative fallback (forward permitted iff we
+  // know a back of ours preceded it).
+  return readBackFlag();
+}
+
+/**
  * Trigger the browser back gesture. Uses window.history.back() in the
  * active tab. If the tab has no history (history.length <= 1), the
  * user opened it directly and there is nothing to go back to — report
  * that instead of scheduling a useless navigation.
  */
 export function backAction(description: string): string {
-  logger.info('action', 'back', { historyLen: history.length });
-  if (history.length <= 1) {
+  const info = readNavIndex();
+  logger.info('action', 'back', {
+    historyLen: history.length,
+    navIndex: info?.index,
+    navTotal: info?.total,
+  });
+  if (!canGoBack()) {
     return 'There is no previous page to go back to.';
   }
   writeBackFlag(true);
@@ -392,13 +447,18 @@ export function backAction(description: string): string {
 }
 
 /**
- * Trigger the browser forward gesture. Only meaningful right after a
- * back (within the same tab — otherwise window.name is empty and
- * we say so). Clears the persistent flag when we actually fire.
+ * Trigger the browser forward gesture. Reads the browser's Navigation
+ * API to determine if there is a forward entry, falling back to our
+ * own back-tracking flag when the API isn't available.
  */
 export function forwardAction(description: string): string {
-  logger.info('action', 'forward', { historyLen: history.length });
-  if (!readBackFlag()) {
+  const info = readNavIndex();
+  logger.info('action', 'forward', {
+    historyLen: history.length,
+    navIndex: info?.index,
+    navTotal: info?.total,
+  });
+  if (!canGoForward()) {
     return 'There is no next page to go forward to.';
   }
   writeBackFlag(false);
