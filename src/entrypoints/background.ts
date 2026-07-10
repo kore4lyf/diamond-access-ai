@@ -30,6 +30,17 @@ import * as logger from '../lib/logger';
 export default defineBackground(() => {
   console.log('Diamond Access AI service worker started');
 
+  // ── DEV-ONLY: auto-enable verbose LLM logging (PC-VLOG companion)
+  // Skips the manual `await chrome.storage.local.set(...)` step in SW
+  // DevTools the user was previously running by hand. Vite tree-shakes
+  // the entire `if (import.meta.env.DEV)` branch out of any production
+  // CRX build (`pnpm build`), so shipped extensions never carry this
+  // opt-in. Dev installs (`pnpm dev`) get verbose LLM bodies captured
+  // automatically — see src/entrypoints/options.html → "Verbose LLM response log".
+  if (import.meta.env.DEV) {
+    chrome.storage.local.set({ diamond_verbose_llm: true }).catch(() => {});
+  }
+
   // ───────────────────────────────────────────────────────────────────────
   // API KEY SEEDING — DEV-ONLY (HARD RULE)
   // ───────────────────────────────────────────────────────────────────────
@@ -697,7 +708,15 @@ async function handlePageLoad(
     const prompt = buildPageLoadPrompt({ url, title, structure });
 
     const llmSw = new logger.Stopwatch('llm_response', 'PAGE_LOAD LLM');
-    const summary = await callLLMWithRetry(PERSONA_BLOCK, prompt);
+    // PAGE_LOAD_TASK is explicitly prose-only — "two spoken lines, plain
+    // English, no lists, no JSON, no 'you can' suggestions." Forcing a
+    // JSON-shape retry (the default retries=1) makes the model invent
+    // schemas like `{"action":"speak", ...}` on attempt 1 because no
+    // schema is in the retry prompt, leaving content.ts to fall through
+    // and speak the raw JSON wrapper aloud. PC-QA user verified: that's
+    // why "action… speak" was being heard on every page load. retries=0
+    // disables that retry path; attempt=0 prose flows back unchanged.
+    const summary = await callLLMWithRetry(PERSONA_BLOCK, prompt, 0);
     const llmMs = llmSw.stop();
     logger.info('llm_response', 'PAGE_LOAD summary', { length: summary.length });
 
