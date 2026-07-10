@@ -316,25 +316,53 @@ export function navigateAction(url: string): string {
 // destructive (history.back / history.forward / location.reload) tear the
 // page down, so each helper schedules the call via `setTimeout(..., 50)`
 // to let the TTS queue accept the spoken acknowledgment before unload.
+//
+// History-aware messaging (PC-BACK follow-up):
+//   - back:    if history.length <= 1, the user opened this tab
+//              directly and there is nothing to go back to. Speak
+//              "There is no previous page." and skip the navigation.
+//   - forward: only meaningful right after a back. A tiny module-level
+//              `lastActionWasBack` flag tracks this — set on a
+//              successful back (history.length >= 2), cleared by
+//              forwardAction when it actually fires. Conservative but
+//              predictable for blind users who'd otherwise hear a
+//              "Going forward." that immediately stalls.
 // ---------------------------------------------------------------------------
 
 /**
+ * Set by backAction so forwardAction knows there's something to go
+ * forward to. Cleared by forwardAction when it fires successfully.
+ */
+let lastActionWasBack = false;
+
+/**
  * Trigger the browser back gesture. Uses window.history.back() in the
- * active tab; the page navigates to wherever the user came from, NOT
- * forced to homepage.
+ * active tab. If the tab has no history (history.length <= 1), the
+ * user opened it directly and there is nothing to go back to — report
+ * that instead of scheduling a useless navigation.
  */
 export function backAction(description: string): string {
-  logger.info('action', 'back');
+  logger.info('action', 'back', { historyLen: history.length });
+  if (history.length <= 1) {
+    return 'There is no previous page to go back to.';
+  }
+  lastActionWasBack = true;
   const msg = description || 'Going back.';
   setTimeout(() => { history.back(); }, 50);
   return msg;
 }
 
 /**
- * Trigger the browser forward gesture.
+ * Trigger the browser forward gesture. Only meaningful right after a
+ * back — if we haven't backed out of anything, tell the user so
+ * instead of scheduling a no-op forward that would stall.
  */
 export function forwardAction(description: string): string {
-  logger.info('action', 'forward');
+  logger.info('action', 'forward', { historyLen: history.length });
+  if (!lastActionWasBack) {
+    return 'There is no next page to go forward to.';
+  }
+  lastActionWasBack = false;
   const msg = description || 'Going forward.';
   setTimeout(() => { history.forward(); }, 50);
   return msg;
@@ -342,6 +370,8 @@ export function forwardAction(description: string): string {
 
 /**
  * Reload the current tab in place. Reversible — no confirm needed.
+ * Refresh neither moves the user forward nor back, so the
+ * `lastActionWasBack` flag is intentionally left alone.
  */
 export function refreshAction(description: string): string {
   logger.info('action', 'refresh');

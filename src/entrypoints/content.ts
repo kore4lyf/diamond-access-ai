@@ -722,7 +722,7 @@ async function handleResponse(
 
 /**
  * Minimal schema check — verifies the parsed object matches one of the
- * known action shapes. Covers the five schemas from the system prompt.
+ * known action shapes. Covers all eight schemas from the system prompt.
  */
 function isValidAction(obj: Record<string, unknown>): boolean {
   if (typeof obj.action !== 'string') return false;
@@ -753,6 +753,16 @@ function isValidAction(obj: Record<string, unknown>): boolean {
         obj.pendingAction !== null &&
         typeof obj.pendingAction === 'object'
       );
+
+    // ── Phase J + Fix 2: browser-chrome actions. All three share the
+    //    same shape — a `description` string for the spoken ack.
+    //    Without these cases here, the validator falls through to the
+    //    `default: return false;` branch and handleResponse speaks the
+    //    raw JSON envelope aloud (PC-BACK regression — see 4399dcf).
+    case 'back':
+    case 'forward':
+    case 'refresh':
+      return typeof obj.description === 'string';
 
     default:
       return false;
