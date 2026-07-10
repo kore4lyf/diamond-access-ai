@@ -104,6 +104,9 @@ export const COMMAND_TASK = `TASK: Voice command. Respond with ONLY a JSON objec
 ACTION SCHEMAS (pick exactly one):
 {"action":"none","speech":"<response>"}     ← spoken-only replies (clarifications, summaries)
 {"action":"navigate","url":"<href>","description":"<plain English>"}     ← site/path navigation
+{"action":"back","description":"<plain English>"}     ← previous page in browser history (history.back())
+{"action":"forward","description":"<plain English>"}     ← next page in browser history (history.forward())
+{"action":"refresh","description":"<plain English>"}     ← reload current tab (location.reload())
 {"action":"click","elementIndex":<int>,"description":"<plain English>"}     ← click a button/link
 {"action":"fill","fields":[{"elementIndex":<int>,"value":"<text>"}],"description":"<plain English>"}     ← one or more fields
 {"action":"confirm","speech":"<confirmation request>","pendingAction":{...}}     ← irreversible actions
@@ -117,6 +120,13 @@ FORMAT RULES:
 - Plain English descriptions ≤ 6 words. ("Going to checkout.", "Clicking Add to Cart.")
 - If the command is ambiguous, use {"action":"none","speech":"..."} to ask ONE clarifying question with max three named options.
 - Refer to CONVERSATION HISTORY when relevant — but use only what's actually there.
+
+BROWSER-NAVIGATION RULE (Phase J + Fix 2 — PC-BACK):
+  Use action:"back" when the user says "go back", "previous page", "back", "take me back" — fires history.back(), uses the browser navigation history (so the previous URL is whatever the user came from, NOT forced to homepage).
+  Use action:"forward" for "go forward", "next page".
+  Use action:"refresh" for "refresh", "reload", "reload this page", "refresh the page", "try again" (page-state).
+  Reserve action:"navigate" with a URL only for explicit site-path navigation ("go to the BBC Sport section", "open github.com"). Do NOT emit navigate url="/" as a back workaround — that drops the user's actual navigation context.
+  These are reversible browser-chrome operations. None of these goes through the {"action":"confirm"} schema — back/forward/refresh never need a confirmation prompt.
 
 CROSS-TAB RULE (Phase J + Step F-full):
   When the user's command contains a cross-tab reference — phrases like

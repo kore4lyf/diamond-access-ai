@@ -36,7 +36,10 @@ export type DiamondAction =
   | { action: 'navigate'; url: string; description: string }
   | { action: 'click'; elementIndex: number; description: string }
   | { action: 'fill'; fields: FillField[]; description: string }
-  | { action: 'confirm'; speech: string; pendingAction: DiamondAction };
+  | { action: 'confirm'; speech: string; pendingAction: DiamondAction }
+  | { action: 'back'; description: string }
+  | { action: 'forward'; description: string }
+  | { action: 'refresh'; description: string };
 
 // ---------------------------------------------------------------------------
 // Module state (confirmation flow)
@@ -90,6 +93,18 @@ export async function executeAction(
 
       case 'navigate':
         result = navigateAction(action.url);
+        break;
+
+      case 'back':
+        result = backAction(action.description);
+        break;
+
+      case 'forward':
+        result = forwardAction(action.description);
+        break;
+
+      case 'refresh':
+        result = refreshAction(action.description);
         break;
 
       case 'click':
@@ -290,6 +305,49 @@ export function navigateAction(url: string): string {
   } catch {
     return ERRORS.NAV_FAILED;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Browser-chrome actions (Fix 2 — PC-BACK)
+//
+// Diamond is the hands of a blind user. These map directly to page-context
+// APIs, not extension APIs. NO new permissions required — content-script
+// context already has access to `history` and `location`. Page-chrome
+// destructive (history.back / history.forward / location.reload) tear the
+// page down, so each helper schedules the call via `setTimeout(..., 50)`
+// to let the TTS queue accept the spoken acknowledgment before unload.
+// ---------------------------------------------------------------------------
+
+/**
+ * Trigger the browser back gesture. Uses window.history.back() in the
+ * active tab; the page navigates to wherever the user came from, NOT
+ * forced to homepage.
+ */
+export function backAction(description: string): string {
+  logger.info('action', 'back');
+  const msg = description || 'Going back.';
+  setTimeout(() => { history.back(); }, 50);
+  return msg;
+}
+
+/**
+ * Trigger the browser forward gesture.
+ */
+export function forwardAction(description: string): string {
+  logger.info('action', 'forward');
+  const msg = description || 'Going forward.';
+  setTimeout(() => { history.forward(); }, 50);
+  return msg;
+}
+
+/**
+ * Reload the current tab in place. Reversible — no confirm needed.
+ */
+export function refreshAction(description: string): string {
+  logger.info('action', 'refresh');
+  const msg = description || 'Refreshing.';
+  setTimeout(() => { location.reload(); }, 50);
+  return msg;
 }
 
 /**
