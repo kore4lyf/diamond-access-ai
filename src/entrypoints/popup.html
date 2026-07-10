@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Diamond Access AI</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1a1a1a;
+        --fg-muted: #6b6b6b;
+        --bg: #ffffff;
+        --border: #d0d0d0;
+        --accent: #1e88e5;
+        --ok: #15803d;
+        --warn: #b45309;
+        --err: #b91c1c;
+        --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #f1f1f1;
+          --fg-muted: #9a9a9a;
+          --bg: #1c1c1c;
+          --border: #2f2f2f;
+          --accent: #4ea8ff;
+          --ok: #4ade80;
+          --warn: #fbbf24;
+          --err: #f87171;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 16px;
+        font-family: var(--font);
+        font-size: 14px;
+        line-height: 1.45;
+        color: var(--fg);
+        background: var(--bg);
+        width: 320px;
+      }
+      h1 {
+        margin: 0 0 4px 0;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .lede {
+        margin: 0 0 14px 0;
+        color: var(--fg-muted);
+        font-size: 12px;
+      }
+      .section {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--border);
+      }
+      .section:first-of-type { border-top: 0; padding-top: 0; }
+      .mode-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 8px 10px;
+        margin-top: 6px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .mode-row:hover { background: rgba(0, 0, 0, 0.04); }
+      .mode-row.selected {
+        border-color: var(--accent);
+        background: rgba(30, 136, 229, 0.08);
+      }
+      .mode-row input { margin: 2px 0 0 0; cursor: pointer; }
+      .mode-label { font-weight: 500; }
+      .mode-desc {
+        font-size: 12px;
+        color: var(--fg-muted);
+        margin-top: 2px;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 11px;
+        margin-top: 6px;
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.04);
+        font-size: 13px;
+      }
+      .dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--fg-muted);
+      }
+      .dot.idle { background: var(--fg-muted); }
+      .dot.listening { background: var(--accent); }
+      .dot.processing { background: var(--warn); animation: pulse 1s infinite; }
+      .dot.err { background: var(--err); }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
+      }
+      .status-text { font-weight: 500; }
+      .settings-link {
+        display: block;
+        margin-top: 12px;
+        padding: 10px 12px;
+        text-align: center;
+        background: transparent;
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-weight: 500;
+        font-family: var(--font);
+        font-size: 14px;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .settings-link:hover {
+        background: rgba(0, 0, 0, 0.04);
+        border-color: var(--accent);
+      }
+      .hint {
+        margin-top: 12px;
+        padding: 10px 12px;
+        background: rgba(0, 0, 0, 0.03);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        font-size: 12px;
+        color: var(--fg-muted);
+      }
+      .hint kbd {
+        display: inline-block;
+        padding: 1px 5px;
+        margin: 0 1px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        color: var(--fg);
+      }
+      .footer {
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+        font-size: 11px;
+        color: var(--fg-muted);
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Diamond Access AI</h1>
+    <p class="lede">Pick the activation mode. Settings stays separate, so a helper can configure the API key without typing.</p>
+
+    <div class="section">
+      <strong>Activation mode</strong>
+
+      <label class="mode-row" data-mode="command">
+        <input type="radio" name="mode" value="command" />
+        <div>
+          <div class="mode-label">Command mode <span style="font-weight:400;color:var(--fg-muted);font-size:11px;">(default)</span></div>
+          <div class="mode-desc">Push-to-talk. Press <kbd>Alt</kbd>+<kbd>D</kbd>, speak, release. One utterance per press.</div>
+        </div>
+      </label>
+
+      <label class="mode-row" data-mode="hands_free">
+        <input type="radio" name="mode" value="hands_free" />
+        <div>
+          <div class="mode-label">Hands-free mode</div>
+          <div class="mode-desc">One press keeps listening across multiple utterances. Sleeps after 60s of silence.</div>
+        </div>
+      </label>
+    </div>
+
+    <div class="section">
+      <strong>Status</strong>
+      <p class="status" aria-live="polite">
+        <span class="dot idle" id="status-dot"></span>
+        <span class="status-text" id="status-text">Idle</span>
+      </p>
+    </div>
+
+    <a class="settings-link" id="settings-link" href="#">Open Settings (API key)</a>
+
+    <div class="hint">
+      <strong>For helpers:</strong> open Settings above to set the Fireworks API key. Diamond activation mode survives across restarts.
+    </div>
+
+    <div class="footer">
+      Alt+D &middot; Ctrl+Shift+D &middot; Alt+Shift+D
+    </div>
+
+    <!--
+      MV3 CSP is `script-src 'self'` — inline scripts are blocked.
+      External scripts served from the extension's own origin are allowed.
+      See public/popup-page.js for the form logic.
+    -->
+    <script src="./popup-page.js"></script>
+  </body>
+</html>

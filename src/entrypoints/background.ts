@@ -16,8 +16,11 @@ import {
 import {
   storage,
   detectGoal,
+  detectModeSwitch,
   handleClearCommand,
   handleWhereWasI,
+  normalizeMode,
+  nextMode,
 } from '../lib/storage';
 import { ERRORS } from '../lib/errors';
 import * as logger from '../lib/logger';
@@ -86,6 +89,17 @@ export default defineBackground(() => {
           // silent fail is acceptable; Diamond simply won't activate.
         });
       }
+      return;
+    }
+
+    // Phase J: Alt+S — global activation-mode toggle (Command <-> Hands-Free).
+    // Funnels through `toggleModeViaStorage` so the popup-toggle path,
+    // voice mode switch, and this Alt+S path all share one copy of the
+    // logic. The active tab picks up MODE_CHANGED, speaks the new mode
+    // name, and stops any running hands-free loop if going to command.
+    if (command === 'toggle-diamond-mode') {
+      await toggleModeViaStorage();
+      return;
     }
   });
 
@@ -135,20 +149,136 @@ export default defineBackground(() => {
         return true;
       }
 
+      // ── GET_MODE: popup reads current activation mode ───────────────────
+      if (msg.type === 'GET_MODE') {
+        storage
+          .getMode()
+          .then((mode) => {
+            sendResponse({ mode });
+          })
+          .catch((e) => {
+            logger.warn('storage', 'GET_MODE failed', {
+              err: e instanceof Error ? e.message : String(e),
+            });
+            sendResponse({ mode: 'command' });
+          });
+        return true;
+      }
+
+      // ── SET_MODE: popup or voice command flips activation mode ──────────
+      if (msg.type === 'SET_MODE') {
+        const requested = normalizeMode((msg as { mode?: unknown }).mode);
+        storage
+          .setMode(requested)
+          .then(() => {
+            logger.info('storage', 'mode changed', { mode: requested });
+            sendResponse({ ok: true, mode: requested });
+            broadcastModeChange(requested).catch(() => {});
+          })
+          .catch((e) => {
+            logger.warn('storage', 'SET_MODE failed', {
+              err: e instanceof Error ? e.message : String(e),
+            });
+            sendResponse({ ok: false, error: String(e) });
+          });
+        return true;
+      }
+
+      // ── OPEN_OPTIONS_CLICKED: just a log + telemetry ping ──────────────
+      if (msg.type === 'OPEN_OPTIONS_CLICKED') {
+        logger.info('user', 'settings opened via popup');
+        sendResponse({ ok: true });
+        return true;
+      }
+
+      // ── TOGGLE_MODE: Alt+S content-script keydown fallback ──────────────
+      // Same effect as the manifest-bound Alt+S — `toggleModeViaStorage`
+      // owns the actual flip. Content script uses this path when its
+      // capture-phase Alt+S listener fires (chrome:// pages, devtools,
+      // or any time the manifest binding is suppressed).
+      if (msg.type === 'TOGGLE_MODE') {
+        toggleModeViaStorage()
+          .then(() => sendResponse({ ok: true }))
+          .catch((e) => {
+            logger.warn('storage', 'TOGGLE_MODE failed', {
+              err: e instanceof Error ? e.message : String(e),
+            });
+            sendResponse({ ok: false });
+          });
+        return true;
+      }
+
       // Default: acknowledge receipt
       sendResponse({ received: true, type: msg.type ?? 'unknown' });
       return true;
     },
   );
 
-  chrome.action.onClicked.addListener((tab) => {
-    console.log('[background] toolbar icon clicked for tab', tab.id, tab.url);
-  });
+  // No chrome.action.onClicked handler — Phase J added action.default_popup
+  // in wxt.config.ts, so Chrome opens popup.html on icon click instead.
+  // (Per Chrome docs: when default_popup is set, onClicked does NOT fire.)
+  // Caretakers now have a mode toggle + Settings shortcut. The blind user
+  // still activates via Alt+D (or Alt+Shift+D / Ctrl+Shift+D), which is
+  // unchanged.
 });
 
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
+
+/**
+ * Broadcast a MODE_CHANGED message to every open tab so content scripts
+ * can adapt their activation state on the next interaction without a
+ * reload. Tabs without a content script (chrome:// pages, the Chrome
+ * Web Store, etc.) silently fail — that's expected.
+ *
+ * Resolves once all tabs have been fanned out to (best-effort: errors
+ * are swallowed per-tab). Never throws.
+ */
+async function broadcastModeChange(mode: ReturnType<typeof normalizeMode>): Promise<void> {
+  try {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      if (tab.id != null) {
+        chrome.tabs
+          .sendMessage(tab.id, { type: 'MODE_CHANGED', mode })
+          .catch(() => undefined);
+      }
+    }
+  } catch {
+    // chrome.tabs.query not available in some test contexts — no-op.
+  }
+}
+
+/**
+ * Phase J: Toggle the persisted activation mode and broadcast it.
+ *
+ * Both entry paths funnel through this helper so the logic lives in one
+ * place: `chrome.commands.onCommand` for `toggle-diamond-mode` (Alt+S via
+ * the manifest binding), and the content-script Alt+S keydown fallback
+ * that forwards as a `TOGGLE_MODE` message. The MODE_CHANGED broadcast
+ * triggers two reactions in the active tab:
+ *
+ *   1. Content script speaks the new mode name (`ERRORS.MODE_*_ON`).
+ *   2. If going back to `command` while a hands-free loop is armed,
+ *      `stopHandsFree()` is called so the change is immediate.
+ *
+ * Returns silently on failure — caller can decide whether to surface
+ * the error (the SW handler currently doesn't, the message handler logs).
+ */
+async function toggleModeViaStorage(): Promise<void> {
+  try {
+    const current = await storage.getMode();
+    const flipped = nextMode(current);
+    await storage.setMode(flipped);
+    logger.info('storage', 'mode toggled', { from: current, to: flipped });
+    await broadcastModeChange(flipped);
+  } catch (e) {
+    logger.warn('storage', 'toggle mode failed', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
 
 /**
  * COMMAND: Full user command round-trip with conversation context.
@@ -211,6 +341,35 @@ async function handleCommand(
       sendResponse({ text: clearResponse });
       sw.stop('cleared');
       return;
+    }
+
+    // Phase J: voice mode switch ("switch to hands-free mode / command mode").
+    // Targets blind / motor-impaired users who can speak but want to stop
+    // pressing Alt+D repeatedly. Same path works for caretakers toggling
+    // for the user mid-conversation.
+    const modeSwitch = detectModeSwitch(transcript);
+    if (modeSwitch) {
+      try {
+        await storage.setMode(modeSwitch);
+        logger.info('storage', 'mode switched via voice command', {
+          mode: modeSwitch,
+        });
+        await broadcastModeChange(modeSwitch);
+        const reply =
+          modeSwitch === 'hands_free'
+            ? ERRORS.MODE_HANDS_FREE_ON
+            : ERRORS.MODE_COMMAND_ON;
+        sendResponse({ text: reply });
+        sw.stop('mode-switch-via-voice');
+        return;
+      } catch (e) {
+        logger.warn('storage', 'voice mode-switch failed', {
+          err: e instanceof Error ? e.message : String(e),
+        });
+        sendResponse({ text: ERRORS.MODE_SWITCH_FAILED });
+        sw.stop('mode-switch-failed');
+        return;
+      }
     }
 
     // ── Handle "where was I?" ────────────────────────────────────────────

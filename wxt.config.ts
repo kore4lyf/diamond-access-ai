@@ -20,6 +20,12 @@ export default defineConfig({
     },
     action: {
       default_title: 'Diamond Access AI — Press Ctrl+Shift+D to activate',
+      // Phase J: extension popup exposes activation mode + settings link.
+      // Caretakers can flip command/hands-free mode without keyboard,
+      // and reach the Options page (API key) without chrome://extensions.
+      // CSP note: popup refers to public/popup-page.js via <script src>,
+      // which is allowed under MV3 default `script-src 'self'`.
+      default_popup: 'popup.html',
     },
     commands: {
       'activate-diamond': {
@@ -30,6 +36,14 @@ export default defineConfig({
         suggested_key: { default: 'Alt+Shift+D' },
         description:
           'Activate Diamond (alt — use if primary conflicts)',
+      },
+      'toggle-diamond-mode': {
+        // Phase J: Alt+S flips activation mode between Command (push-to-
+        // talk) and Hands-Free (continuous STT). Universal toggle key
+        // that doesn't conflict with browser reserved shortcuts.
+        suggested_key: { default: 'Alt+S' },
+        description:
+          'Toggle Diamond activation mode (Command <-> Hands-Free)',
       },
     },
     icons: {
