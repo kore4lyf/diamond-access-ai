@@ -28,6 +28,7 @@
 
 import { ERRORS } from './errors';
 import * as logger from './logger';
+import { stripSpokenMarkdown } from './text-format';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,7 +161,21 @@ export function speak(text: string): Promise<void> {
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    // Defense-in-depth (Round 1B): strip markdown / JSON / escape noise
+    // from any text going to TTS. The LLM is told to produce plain prose,
+    // but model drift can leak `**`, `_`, `\\`, brackets etc. TTS reads
+    // those as words ("asterisk", "underscore", "backslash backslash")
+    // — disaster for spoken output. Single choke point here covers every
+    // call site without touching every speak() caller.
+    const cleanText = stripSpokenMarkdown(text);
+    if (cleanText !== text) {
+      logger.debug('tts', 'spoken text cleaned', {
+        beforeChars: text.length,
+        afterChars: cleanText.length,
+      });
+    }
+
+    const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
