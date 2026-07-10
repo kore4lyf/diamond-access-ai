@@ -53,6 +53,31 @@ type ActivationSource = 'sw' | 'kbd';
 let lastActivationSource: ActivationSource = 'sw';
 
 // ---------------------------------------------------------------------------
+// Console-timer state tracking
+// ---------------------------------------------------------------------------
+/**
+ * console.timeEnd against an unknown label emits a `console.warn`,
+ * NOT an exception — so the outer-finally `try { timeEnd } catch {}`
+ * added in 087c65e does NOT suppress the `Timer 'diamond-xxx' does
+ * not exist` warnings we observed on the success path (where the
+ * inline timeEnd inside the COMMAND try block had already ended the
+ * label).
+ *
+ * Track each label in a Set as it starts; only call timeEnd when the
+ * label is still in the Set, and remove it on end. This guarantees
+ * we never timeEnd an already-ended label — on every path, not just
+ * the failure path the 087c65e patch attempted to cover.
+ */
+const activeTimers = new Set<string>();
+function tStart(label: string): void {
+  activeTimers.add(label);
+  console.time(label);
+}
+function tEnd(label: string): void {
+  if (activeTimers.delete(label)) console.timeEnd(label);
+}
+
+// ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
 
@@ -370,21 +395,21 @@ async function activateDiamond(): Promise<void> {
  * Confirmed users continue, unconfirmed commands go to LLM.
  */
 async function activateCommandMode(): Promise<void> {
-  console.time('diamond-command');
+  tStart('diamond-command');
 
   playBeep('awake');
   resetSleepTimer();
 
-  console.time('diamond-stt');
+  tStart('diamond-stt');
   const transcript = await startListening();
-  console.timeEnd('diamond-stt');
+  tEnd('diamond-stt');
   resetSleepTimer();
 
   if (!transcript) {
     // Per ERRORS.STT_NO_SPEECH: silence on no-speech. The constant is
     // intentionally empty — don't fall back to a spoken message which
     // would defeat the design.
-    console.timeEnd('diamond-command');
+    tEnd('diamond-command');
     logger.debug('user', 'no transcript (Alt+D released)');
     await speak(ERRORS.STT_NO_SPEECH);
     return;
@@ -404,7 +429,7 @@ async function activateCommandMode(): Promise<void> {
       // End diamond-command here: this branch returns BEFORE the
       // try/finally block below, so without this timeEnd we'd leak a
       // "Timer started but never ended" console warning on every confirm.
-      console.timeEnd('diamond-command');
+      tEnd('diamond-command');
       const snap = buildPageSnapshot();
       const result = await executeAction(confirmResult.action, snap);
       if (result) await speak(result);
@@ -423,7 +448,7 @@ async function activateCommandMode(): Promise<void> {
   try {
     const snap = buildPageSnapshot();
 
-    console.time('diamond-vlm');
+    tStart('diamond-vlm');
     let pageContext = snap.structure;
 
     // Check if DOM is too sparse — request VLM fallback
@@ -444,10 +469,10 @@ async function activateCommandMode(): Promise<void> {
         // VLM unavailable — proceed with text-only structure
       }
     }
-    console.timeEnd('diamond-vlm');
+    tEnd('diamond-vlm');
 
     // --- Send COMMAND to service worker ---
-    console.time('diamond-llm');
+    tStart('diamond-llm');
     logger.info('command', 'sending COMMAND to SW', {
       transcriptLen: transcript.length,
       pageContextLen: pageContext.length,
@@ -459,7 +484,7 @@ async function activateCommandMode(): Promise<void> {
       pageStructure: pageContext,
       url: window.location.href,
     });
-    console.timeEnd('diamond-llm');
+    tEnd('diamond-llm');
 
     const rawResponse =
       typeof response === 'string'
@@ -471,15 +496,15 @@ async function activateCommandMode(): Promise<void> {
       // finally block, so omitting this would leak a "Timer started
       // but never ended" console warning.
       logger.warn('command', 'SW returned empty response');
-      console.timeEnd('diamond-command');
+      tEnd('diamond-command');
       await speak(ERRORS.EMPTY_RESPONSE);
       return;
     }
 
     // --- Parse and execute response ---
-    console.time('diamond-action');
+    tStart('diamond-action');
     await handleResponse(rawResponse, snap);
-    console.timeEnd('diamond-action');
+    tEnd('diamond-action');
   } catch (e: unknown) {
     const errMsg = String(e);
     if (
@@ -494,23 +519,25 @@ async function activateCommandMode(): Promise<void> {
       await speak(ERRORS.AI_UNAVAILABLE);
     }
   } finally {
-    // PC-PCQ follow-up: when chrome.runtime.sendMessage or
-    // handleResponse throws (e.g. "Extension context invalidated" on
-    // SW restart, or "message channel closed"), the inline
-    // timeEnd('diamond-llm') / timeEnd('diamond-action') calls below
-    // never run — Chrome DevTools keeps the timer label armed. The
-    // next activation calls console.time('diamond-llm') again and
-    // Chrome throws "Timer 'diamond-llm' already exists".
+    // End each still-active inner timer via tEnd: it gates on
+    // activeTimers membership, so already-ended labels are no-ops
+    // and Chrome's "Timer does not exist" warning is never emitted.
     //
-    // Defensive cleanup: try each inner timeEnd inside its own
-    // try/catch so Chrome's "Timer does not exist" warning is
-    // swallowed on the success path (where the label was already
-    // ended inline). The outer diamond-command timer ends
-    // unconditionally — it's the only one with the "started once,
-    // ended once" invariant.
-    try { console.timeEnd('diamond-llm'); } catch { /* may not be active */ }
-    try { console.timeEnd('diamond-action'); } catch { /* may not be active */ }
-    console.timeEnd('diamond-command');
+    // This block covers the failure paths too — when
+    // chrome.runtime.sendMessage or handleResponse throws (e.g.
+    // "Extension context invalidated" on SW restart, or "message
+    // channel closed"), the inline tEnd calls above never run, so
+    // the timer labels are still in activeTimers. tEnd here removes
+    // and ends them cleanly. Without this, the next activation would
+    // hit `console.time('diamond-llm')` against an already-armed
+    // label and emit "Timer 'diamond-llm' already exists" — the
+    // original 087c65e symptom, now fixed at the source instead of
+    // swallowed by a try/catch (because console.timeEnd on an
+    // unknown label is a `console.warn`, not an exception, so the
+    // 087c65e try/catch never fired).
+    tEnd('diamond-llm');
+    tEnd('diamond-action');
+    tEnd('diamond-command');
     isProcessing = false;
   }
 }
