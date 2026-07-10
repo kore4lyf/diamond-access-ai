@@ -174,9 +174,29 @@ export function clickAction(
   snapshot: PageSnapshot,
   description: string,
 ): string {
-  const el = resolveElement(elementIndex, snapshot);
+  // Phase J: try elementIndex first; if it misses (DOM drift, stale
+  // snap, off-by-one), fall back to description-based matching against
+  // the same snapshot. PC-QS-1 — Google search submit, where the LLM
+  // typically picks an elementIndex whose snap has already shifted
+  // after the previous fillAction.
+  let el = resolveElement(elementIndex, snapshot);
+  let viaFallback = false;
+  if (!el && description) {
+    el = resolveElementByDescription(description, snapshot);
+    if (el) {
+      viaFallback = true;
+      logger.info('action', 'click: resolved via description fallback', {
+        requestedIndex: elementIndex,
+        description,
+        tag: el.tagName,
+      });
+    }
+  }
   if (!el) {
-    logger.warn('action', 'click: element not found', { elementIndex });
+    logger.warn('action', 'click: element not found', {
+      elementIndex,
+      description,
+    });
     return ERRORS.ELEMENT_NOT_FOUND;
   }
 
@@ -185,6 +205,7 @@ export function clickAction(
     tag: el.tagName,
     description,
     role: el.getAttribute('role'),
+    viaFallback,
   });
 
   el.scrollIntoView?.({ behavior: 'instant', block: 'center' });
@@ -747,4 +768,40 @@ function resolveElement(
   const idx = elementIndex - 1;
   if (idx < 0 || idx >= snapshot.elements.length) return null;
   return snapshot.elements[idx] ?? null;
+}
+
+/**
+ * Resolve an element by matching its description text against the
+ * snapshot's element visible text / aria-label / input value.
+ * Used as a fallback when the LLM's elementIndex is stale or out of
+ * bounds (Phase J PC-QS-1 mitigation).
+ *
+ * @param description - The LLM-provided action description, e.g.
+ *                     "Clicking Google Search"
+ * @param snapshot    - The page snapshot
+ * @returns The first matching HTMLElement, or null if no match
+ */
+function resolveElementByDescription(
+  description: string,
+  snapshot: PageSnapshot,
+): HTMLElement | null {
+  const needle = description.toLowerCase().trim();
+  if (!needle) return null;
+  for (const el of snapshot.elements) {
+    if (!el) continue;
+    const text =
+      (el.textContent?.trim() ?? '').toLowerCase() ||
+      (el.getAttribute('aria-label')?.trim() ?? '').toLowerCase();
+    if (!text) continue;
+    if (text.includes(needle)) return el as HTMLElement;
+    // For inputs/buttons, also check the value attribute.
+    if (
+      el.tagName === 'INPUT' ||
+      el.tagName === 'BUTTON'
+    ) {
+      const value = ((el as HTMLInputElement).value ?? '').toLowerCase();
+      if (value && value.includes(needle)) return el as HTMLElement;
+    }
+  }
+  return null;
 }

@@ -624,8 +624,15 @@ async function handleResponse(
   });
 
   // ── Phase H: Safety net — check for irreversible actions ──────────────
-  const elementText = getElementText(action, snapshot);
-  const safeAction = wrapIrreversible(action, elementText);
+  // Phase J (PC-QS-1): also pass the resolved DOM element so safety-net
+  // can run form-context exemption (search/filter/login submits skip
+  // confirm even if the visible text says "Submit").
+  const clickEl =
+    action.action === 'click'
+      ? snapshot.elements[action.elementIndex - 1] ?? null
+      : null;
+  const elementText = getElementText(action, snapshot, clickEl);
+  const safeAction = wrapIrreversible(action, elementText, clickEl);
 
   // Execute via the actions module (Phase F/H)
   try {
@@ -701,10 +708,11 @@ function isValidAction(obj: Record<string, unknown>): boolean {
 function getElementText(
   action: DiamondAction,
   snapshot: import('../lib/page-snapshot').PageSnapshot,
+  preResolvedEl?: HTMLElement | null,
 ): string {
   if (action.action === 'click') {
-    const idx = action.elementIndex - 1;
-    const el = snapshot.elements[idx];
+    const el =
+      preResolvedEl ?? snapshot.elements[action.elementIndex - 1];
     if (el) {
       const text =
         el.textContent?.trim() ||

@@ -30,7 +30,7 @@ function clickAction(
 // ---------------------------------------------------------------------------
 
 describe('wrapIrreversible keywords', () => {
-  it('wraps click on "submit" button in confirm', () => {
+  it('wraps click on "submit order" button in confirm', () => {
     const result = wrapIrreversible(
       clickAction('Submit Order', 'Submit Order'),
       'Submit Order',
@@ -41,6 +41,29 @@ describe('wrapIrreversible keywords', () => {
     expect(result.speech).toContain("Say 'confirm' to proceed");
     expect(result.pendingAction).toBeDefined();
     expect(result.pendingAction.action).toBe('click');
+  });
+
+  // Phase J (PC-QS-1) regression: harmless submit buttons must NOT be
+  // wrapped in confirm. The universal `'submit'` keyword was removed
+  // from safety-net to allow search/forms to submit without friction —
+  // only destructive compounds like `submit order`, `submit application`,
+  // `submit purchase` trigger confirm.
+  it('passes through "Submit Search" unchanged', () => {
+    const action = clickAction('Submit Search', 'Submit Search');
+    const result = wrapIrreversible(action, 'Submit Search');
+    expect(result.action).toBe('click');
+  });
+
+  it('passes through "Submit Comment" unchanged', () => {
+    const action = clickAction('Submit Comment', 'Submit Comment');
+    const result = wrapIrreversible(action, 'Submit Comment');
+    expect(result.action).toBe('click');
+  });
+
+  it('passes through "Submit Post" unchanged', () => {
+    const action = clickAction('Submit Post', 'Submit Post');
+    const result = wrapIrreversible(action, 'Submit Post');
+    expect(result.action).toBe('click');
   });
 
   it('wraps click on "delete account" in confirm', () => {
