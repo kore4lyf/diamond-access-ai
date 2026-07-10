@@ -345,6 +345,14 @@ export function startListening(): Promise<string> {
  *   - On `onend`: auto-restarts until stopHandsFree() or exhaustion.
  *   - Sleep after 60s no transcript (existing resetSleepTimer).
  *
+ * Calling contract — Phase J + Step F-light:
+ *   Called only from `activateHandsFreeMode()` in content.ts, which is
+ *   itself only reached from `activateDiamond()` in the user's active
+ *   tab. There is no other entry path; the SW never calls this directly.
+ *   Background tabs hold the mode in storage but do NOT start a
+ *   recognizer — see the `activateHandsFreeMode` docstring in
+ *   content.ts for the "main tab is focus" rationale.
+ *
  * @param onUtterance - Called with each recognized transcript. May return
  *   synchronously (boolean | void) or as a Promise that resolves to the
  *   same. Returning `false` (sync or async) stops the hands-free loop.

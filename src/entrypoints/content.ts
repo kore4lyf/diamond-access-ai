@@ -278,6 +278,22 @@ export default defineContentScript({
  * Guarded by isListening() (Phase D), isProcessing (Phase E), and
  * isHandsFreeActive (Phase J) to prevent double-activation and overlapping
  * round-trips.
+ *
+ * ─── ACTIVE-TAB ONLY (Phase J + Step E audit) ───
+ * This function runs only in the user's currently-focused tab. Both
+ * entry paths — `chrome.runtime.onMessage({type:'ACTIVATE'})` from the
+ * content-script Alt+D capture-phase keydown listener, and the
+ * MODE_CHANGED-to-'hands_free' transition on this tab — gate on this
+ * tab being the active one. Cross-tab sync (Tab X is hands-free, user
+ * switches to Tab Y, Tab Y reads `diamond_mode` via storage.onChanged)
+ * does NOT re-arm Tab Y's recognizer — that would violate the "main
+ * tab is focus" principle and would also accumulate background-tab
+ * recognizers (Chrome permission footgun). Y stays in command mode
+ * unless the caretaker or the user explicitly says "switch to
+ * hands-free" or presses Alt+S while focused on Y. Therefore every
+ * `speak()` call below is ACTIVE-TAB ONLY by construction. New
+ * contributors adding `speak()` outside this function MUST gate on
+ * `document.visibilityState === 'visible'`.
  */
 async function activateDiamond(): Promise<void> {
   // Guard: not already listening/processing AND no live hands-free loop.
@@ -459,6 +475,15 @@ async function activateCommandMode(): Promise<void> {
  *
  * Safety net: stopHandsFree is called when MODE_CHANGED broadcasts back
  * to 'command', so a caretaker can quickly tag a user out of the loop.
+ *
+ * ─── Active-tab arming rule (Phase J + Step F-light default) ───
+ * Only ever called from `activateDiamond()` above, which runs only in
+ * the user's currently-focused tab. Cross-tab sync (toggle hands-free
+ * in Tab X, switch to Tab Y) does NOT auto-arm Y — Step A's broadcast-
+ * fanout fix routes MODE_CHANGED to a single tab, so non-active tabs
+ * sync state silently via chrome.storage.onChanged but never invoke
+ * `activateDiamond()` themselves. This matches the user's "main tab
+ * is focus" principle and avoids background-tab recognizer accumulation.
  *
  * @returns void — the loop lives in voice.ts, this function is the
  *   callback wiring only.
