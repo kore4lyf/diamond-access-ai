@@ -43,6 +43,7 @@ export type LogCategory =
   | 'safety_net'
   | 'confirm'
   | 'profile'
+  | 'voice'
   | 'storage'
   | 'system'
   | 'error';
