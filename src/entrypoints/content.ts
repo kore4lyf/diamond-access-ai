@@ -126,12 +126,54 @@ export default defineContentScript({
 
     // Phase D/E/F: listen for `ACTIVATE` from the service worker
     // (triggered by chrome.commands.onCommand for Ctrl+Shift+D / Alt+Shift+D).
-    chrome.runtime.onMessage.addListener((message) => {
+    // Phase F-full: GET_SNAPSHOT (handled below) requires the listener
+    // to take the (sender, sendResponse) parameters so we can call
+    // sendResponse synchronously. Other message types can still invoke
+    // activateDiamond without using sendResponse.
+    chrome.runtime.onMessage.addListener(
+      (
+        message,
+        _sender: chrome.runtime.MessageSender,
+        sendResponse: (response: unknown) => void,
+      ) => {
       const msg = message as { type?: string; mode?: unknown };
       if (msg.type === 'ACTIVATE') {
         lastActivationSource = 'sw';
         activateDiamond();
       }
+      // Phase J + Step F-full: cross-tab inquiry. The SW sends
+      // { type: 'GET_SNAPSHOT' } when a content script in another tab
+      // owns a "named" reference (e.g., "the BBC tab"). We respond with
+      // the current page snapshot so the active tab's command pipeline
+      // can use it as supplementary context.
+      //
+      // ─── ACTIVE-TAB ONLY? No — this handler is cross-tab by design. ───
+      // It is invoked from background.ts on every tab the user named,
+      // NOT just the active tab. The active-tab policy doesn't apply
+      // here because we're not speaking; we're only returning a JSON
+      // snapshot for the calling tab's LLM context block. The
+      // generated `speak()` of the LLM response still happens in the
+      // active tab (per Phase J active-tab rule, see activateDiamond's
+      // header comment in this file).
+      if (msg.type === 'GET_SNAPSHOT') {
+        try {
+          const snap = buildPageSnapshot();
+          sendResponse({
+            snapshot: {
+              structure: snap.structure,
+              title: document.title || '',
+              url: window.location.href || '',
+            },
+          });
+        } catch (e) {
+          logger.warn('system', 'GET_SNAPSHOT failed', {
+            err: e instanceof Error ? e.message : String(e),
+          });
+          sendResponse({ snapshot: null });
+        }
+        return true;
+      }
+
       // Phase J: popup-toggle / voice mode switch sends a single-target
       // dispatch (notifyModeChanged in background.ts). Stop a running
       // hands-free loop if this tab has one AND the mode is going to

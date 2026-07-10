@@ -12,7 +12,9 @@ import {
   buildCommandPrompt,
   buildPageLoadPrompt,
   buildVlmPrompt,
+  type SupplementarySnapshot,
 } from '../lib/prompts';
+import { parseCrossTabMatches } from '../lib/cross-tab';
 import {
   storage,
   detectGoal,
@@ -334,6 +336,145 @@ async function toggleModeViaStorage(preferredTabId?: number): Promise<void> {
 }
 
 /**
+ * Cross-tab reference resolver (Phase J + Step F-full)
+ *
+ * Step F-full adds the ability for a user on tab Z to ask "what's on
+ * the BBC tab?" or "compare tab A and tab B". This module:
+ *
+ *  1. parseCrossTabMatches (src/lib/cross-tab.ts) — pure regex parser;
+ *     chromeless, tested in src/lib/__tests__/cross-tab.test.ts.
+ *  2. extractCrossTabRefs (this file) — wraps the parser with
+ *     chrome.tabs.query to resolve matches to actual tabIds. Dedupes
+ *     by tabId, caps at 2 targets for the "no info overload" guard.
+ *  3. fetchSupplementarySnapshots (this file) — sends {type:'GET_SNAPSHOT'}
+ *     to each resolved tab; per-tab 1.5s timeout; errors swallowed.
+ *     Returns SupplementarySnapshot[] (see prompts.ts).
+ *
+ * Safeguard sequence:
+ *  - Default-path-unchanged: parseCrossTabMatches returns [] for
+ *    transcripts with no cross-tab reference. Caller gates on that.
+ *  - Capped: refs cap at 2 even if more matches exist (so "tell me
+ *    about every tab" can't blow the prompt).
+ *  - LLM rule: COMMAND_TASK CROSS-TAB RULE paragraph in prompts.ts
+ *    instructs the model to use SUPPLEMENTARY TABS ONLY when the
+ *    user explicitly asked, otherwise ignore.
+ */
+interface CrossTabRef {
+  /** Displayable substring of the user's transcript that triggered this match. */
+  rawText: string;
+  /** Resolved Chrome tab id. Null if no matching open tab was found. */
+  tabId: number | null;
+  /** Displayable tab title for logging only — may be empty if resolution failed. */
+  tabTitle: string;
+}
+
+/**
+ * Detect cross-tab references in the user's transcript and resolve
+ * them against currently-open tabs via chrome.tabs.query.
+ *
+ * Returns 0–2 references, deduplicated by tabId. An empty array means
+ * "no cross-tab reference in transcript" — caller should skip the
+ * supplementary fetch path entirely.
+ */
+async function extractCrossTabRefs(
+  transcript: string,
+): Promise<CrossTabRef[]> {
+  try {
+    const matches = parseCrossTabMatches(transcript);
+    if (matches.length === 0) return [];
+
+    const allTabs = await chrome.tabs.query({});
+    const refs: CrossTabRef[] = [];
+    const seen = new Set<number>();
+
+    for (const m of matches) {
+      if (refs.length >= 2) break;
+
+      if (m.type === 'ordinal') {
+        const idx = parseInt(m.match, 10) - 1;
+        if (idx >= 0 && idx < allTabs.length) {
+          const tab = allTabs[idx];
+          if (tab.id != null && !seen.has(tab.id)) {
+            seen.add(tab.id);
+            refs.push({
+              rawText: m.rawText,
+              tabId: tab.id,
+              tabTitle: tab.title ?? '',
+            });
+          }
+        }
+      } else {
+        // title-fragment: substring-match against title or URL (lowercased).
+        for (const tab of allTabs) {
+          if (tab.id == null || seen.has(tab.id)) continue;
+          const title = (tab.title ?? '').toLowerCase();
+          const url = (tab.url ?? '').toLowerCase();
+          if (title.includes(m.match) || url.includes(m.match)) {
+            seen.add(tab.id);
+            refs.push({
+              rawText: m.rawText,
+              tabId: tab.id,
+              tabTitle: tab.title ?? '',
+            });
+            break;
+          }
+        }
+      }
+    }
+    return refs;
+  } catch (e) {
+    logger.warn('command', 'cross-tab extract failed', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+    return [];
+  }
+}
+
+/**
+ * Fetch the current page snapshot from each cross-tab ref. Per-tab
+ * 1.5s timeout. Errors swallowed (tab closed, no content script, etc.)
+ * Cap at 2 results.
+ */
+async function fetchSupplementarySnapshots(
+  refs: CrossTabRef[],
+): Promise<SupplementarySnapshot[]> {
+  const results: SupplementarySnapshot[] = [];
+  for (const ref of refs) {
+    if (ref.tabId == null) continue;
+    try {
+      const response = await Promise.race<unknown>([
+        chrome.tabs.sendMessage(ref.tabId, { type: 'GET_SNAPSHOT' }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 1500),
+        ),
+      ]);
+      const data = response as
+        | {
+            snapshot?: {
+              structure?: string;
+              title?: string;
+              url?: string;
+            };
+          }
+        | undefined;
+      if (data?.snapshot?.structure) {
+        results.push({
+          title: data.snapshot.title || ref.tabTitle,
+          url: data.snapshot.url || '',
+          // 4000 chars per snapshot is plenty; structure is just a flat
+          // list of interactive elements + their accessibility names.
+          structure: data.snapshot.structure.slice(0, 4000),
+        });
+      }
+    } catch {
+      // tab closed, no content script, or timeout — skip silently
+    }
+    if (results.length >= 2) break;
+  }
+  return results;
+}
+
+/**
  * COMMAND: Full user command round-trip with conversation context.
  *
  * Phase E: Single-turn prompt (system + page structure + transcript).
@@ -437,12 +578,35 @@ async function handleCommand(
       return;
     }
 
+    // ── Step F-full: cross-tab inquiry (optional) ──────────────────────
+    // Detect cross-tab references in the transcript (e.g., "first tab",
+    // "the BBC tab", "compare tab A and tab B") and pull the current
+    // page snapshot from each named tab to use as supplementary context.
+    // Cap of 2 targets. Silent failure if a target tab has no content
+    // script or is closed.
+    const crossTabRefs = await extractCrossTabRefs(transcript);
+    const supplementarySnapshots =
+      crossTabRefs.length > 0
+        ? await fetchSupplementarySnapshots(crossTabRefs)
+        : [];
+    if (crossTabRefs.length > 0) {
+      logger.info('command', 'cross-tab refs resolved', {
+        refCount: crossTabRefs.length,
+        fetchedCount: supplementarySnapshots.length,
+        refs: crossTabRefs.map((r) => ({
+          raw: r.rawText,
+          tabId: r.tabId ?? 'no-match',
+        })),
+      });
+    }
+
     // ── Build context prompt (COMMAND_TASK + page-specific block) ───────
     const userMessage = buildCommandPrompt({
       pageStructure,
       transcript,
       session,
       url,
+      supplementarySnapshots,
     });
 
     logger.debug('llm_request', 'outbound', {

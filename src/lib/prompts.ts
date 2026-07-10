@@ -114,6 +114,23 @@ FORMAT RULES:
 - If the command is ambiguous, use {"action":"none","speech":"..."} to ask ONE clarifying question with max three named options.
 - Refer to CONVERSATION HISTORY when relevant — but use only what's actually there.
 
+CROSS-TAB RULE (Phase J + Step F-full):
+  When the user's command contains a cross-tab reference — phrases like
+  "the first tab", "the BBC tab", "compare tab A and tab B", "the
+  previous tab" — you may include information from those OTHER tabs
+  in addition to the current tab. A "SUPPLEMENTARY TABS" block appears
+  in the input below ONLY when the user explicitly named one or two
+  other tabs. Use it.
+
+  When NO cross-tab reference appears in the command, answer using
+  ONLY the CURRENT tab's PAGE STRUCTURE. Do not pull in snapshots
+  from the supplementary block; do not invent context from other
+  tabs; do not volunteer cross-tab details the user did not request.
+
+  This rule exists to keep the default single-tab command
+  ("summarize this page", "add to cart", "click submit") identical
+  to before cross-tab inquiry shipped.
+
 IRREVERSIBILITY RULE (Phase J — PC-QS-1):
   Reserve the {"action":"confirm","speech":...,"pendingAction":...} schema for actions that are TRULY destructive or hard to reverse: purchasing, deleting, sending a message, submitting a job application, placing an order, paying, completing a checkout, etc.
   Form-driven actions that are reversible must NOT use the confirm schema; use the plain click schema:
@@ -280,17 +297,37 @@ NOW respond with only the JSON mapping.`;
 // 8. Context-block builder (used by COMMAND_TASK path).
 // ---------------------------------------------------------------------------
 
+/**
+ * A snapshot of a tab the user explicitly named in their command
+ * (e.g., "the BBC tab"). These augment the COMMAND prompt for
+ * cross-tab inquiry only. PC-D-4 / Step F-full safeguard: only
+ * populated when transcript contains an explicit cross-tab ref.
+ *
+ * Per the CROSS-TAB RULE in COMMAND_TASK, the LLM is told to use
+ * these ONLY if the user asked about them. Default commands
+ * ("summarize this page") get an empty supplementarySnapshots and
+ * see no "SUPPLEMENTARY TABS" block in the rendered prompt.
+ */
+export interface SupplementarySnapshot {
+  title: string;
+  url: string;
+  structure: string;
+}
+
 export interface BuildCommandOpts {
   pageStructure: string;
   transcript: string;
   session: SessionState;
   url?: string;
+  /** Phase J + Step F-full cross-tab inquiry — optional, capped at 2 entries. */
+  supplementarySnapshots?: SupplementarySnapshot[];
 }
 
 /**
  * Build the user-message portion of a COMMAND call by substituting
  * the active goal, history, page structure, URL, and transcript into
- * the COMMAND_TASK template.
+ * the COMMAND_TASK template. If `supplementarySnapshots` is non-empty,
+ * append a "SUPPLEMENTARY TABS" block formatted for the LLM.
  */
 export function buildCommandPrompt(opts: BuildCommandOpts): string {
   const goal = opts.session.activeGoal?.trim();
@@ -338,6 +375,25 @@ export function buildCommandPrompt(opts: BuildCommandOpts): string {
       '\n\nCONVERSATION HISTORY (most recent last):\n{history}\n\n',
       '\n\n',
     );
+  }
+
+  // Phase J + Step F-full — append SUPPLEMENTARY TABS block ONLY when
+  // the user explicitly named one or two non-active tabs. The CROSS-TAB
+  // RULE in COMMAND_TASK tells the LLM when to use this and when to ignore
+  // it (i.e. default commands without explicit cross-tab reference).
+  const supplementary = (opts.supplementarySnapshots ?? [])
+    .slice(0, 2)
+    .filter((s) => s.structure && s.structure.trim().length > 0);
+  if (supplementary.length > 0) {
+    const block = supplementary
+      .map((s, i) => {
+        const safeTitle = String(s.title || 'Untitled').slice(0, 120);
+        const safeUrl = String(s.url || '').slice(0, 200);
+        const safeStruct = String(s.structure || '(empty)').slice(0, 4000);
+        return `[Tab ${i + 1}: "${safeTitle}" — ${safeUrl}]\n${safeStruct}`;
+      })
+      .join('\n\n');
+    task = `${task}\n\nSUPPLEMENTARY TABS (the user explicitly named these — read only what was asked):\n${block}\n`;
   }
   return task;
 }
