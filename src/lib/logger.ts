@@ -24,8 +24,22 @@
  *     voice, and pure-function modules alike.
  *   - One ring buffer per script instance. SW and content each have their
  *     own. (Cross-process consolidation could be added later via storage.)
- *   - Always-on. No `import.meta.env.DEV` gate (we don't want to leak Vite
- *     env vars into the bundle — see Phase I fix).
+ *
+ * Phase J + Step L — production gating.
+ *   The user reported: "Logging is only for development, it shouldn't get
+ *   into production." Earlier the logger was always-on (no DEV gate) by
+ *   the prior design choice. That has changed. We now check
+ *   `import.meta.env?.DEV` and short-circuit the entire `log()` body in
+ *   production builds, so:
+ *     - The ring buffer stays empty in production (no diagnostic data).
+ *     - No console.debug/info/warn/error call site fires (no DevTools noise).
+ *   Test runs default to dev (vitest is Vite-transformed; `import.meta.env`
+ *   resolves to DEV=true), so green tests imply the gate is working.
+ *   Vite's tree-shaker still strips any unreachable branch — the
+ *   production CRX comes out with logging effectively gone. The Phase I
+ *   "no VITE_FW_KEY in bundle" commit remains valid because Phase I was
+ *   about API-key embedding, not about logger gating. These are separate
+ *   concerns and the logger gate does not reintroduce the risk.
  */
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
@@ -67,13 +81,42 @@ const TRUNCATE_STRINGS_AT = 240;
 /** Per-script instance ring buffer. */
 const ringBuffer: LogEntry[] = [];
 
-/** Push a log entry (and mirror to browser console). */
+/**
+ * Build-time / run-time check: are we in a development build where full
+ * logging is welcome, or a production CRX where the user has explicitly
+ * asked for silence? Resolves synchronously at module load.
+ *
+ * - Production CRX (Vite build): `import.meta.env.DEV === false` → false
+ *   → `log()` short-circuits, ring buffer + console both stay empty.
+ * - Dev server / unpacked-extension dev mode: `import.meta.env.DEV === true`
+ *   → true → `log()` runs the existing path.
+ * - Vitest (also vite-transformed): same as dev → true.
+ * - Fallback if `import.meta` is undefined or throws: assume true (err on
+ *   the side of logging; alternative — assuming false — would silently
+ *   break dev when import.meta resolution fails).
+ */
+const IS_DEV: boolean = (() => {
+  try {
+    return (
+      typeof import.meta !== 'undefined' &&
+      (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true
+    );
+  } catch {
+    return true;
+  }
+})();
+
+/** Push a log entry (and mirror to browser console), gated to dev. */
 export function log(
   level: LogLevel,
   cat: LogCategory,
   msg: string,
   data?: Record<string, unknown>,
 ): void {
+  // Step L — production CRX has no business logging. Short-circuit before
+  // any work so the ring buffer stays empty and no console mirror fires.
+  if (!IS_DEV) return;
+
   const entry: LogEntry = { ts: Date.now(), level, cat, msg, data };
   ringBuffer.push(entry);
   while (ringBuffer.length > BUFFER_MAX) ringBuffer.shift();
