@@ -498,3 +498,124 @@ export function extractPageStructure(): string {
   if (!document?.body) return '';
   return extractPageStructureFromRoot(document.body);
 }
+
+// ---------------------------------------------------------------------------
+// Image enumeration (Phase J + Image-describe feature)
+//
+// Contrast with `extractPageStructureFromRoot`, which skips `<img>`
+// elements without alt text (good for the LLM input — alt-less images
+// are usually decorative chrome). The describe-image feature needs ALL
+// images, including the alt-free ones, because that's exactly the
+// cohort where vision fallback is most useful.
+//
+// Output is bounded — first MAX_IMAGES only, then stop walking. Per
+// session-memory on cost ceilings, the list-and-pick speak should fit
+// in two spoken sentences for a single page.
+// ---------------------------------------------------------------------------
+
+export interface ImageEntry {
+  /** 1-based position in the enumeration. Matches what the LLM emits
+   *  for `{"action":"describe_image","elementIndex":N}`. */
+  index: number;
+  /** Best accessible name in priority order: aria-label → alt → src
+   *  filename. Empty string if completely unlabeled. */
+  label: string;
+  /** Raw alt text (lower-cased, trimmed) or null. */
+  alt: string | null;
+  /** Raw aria-label or null. */
+  ariaLabel: string | null;
+  /** Resolved href (currentSrc preferred over src). null when missing. */
+  src: string | null;
+  /** Bounding rect at call time. Width/height are CSS pixels; client
+   *  coords. Use devicePixelRatio to convert to screenshot pixels. */
+  bbox: { x: number; y: number; width: number; height: number };
+}
+
+/** Hard cap. List speak must fit two sentences (~50 words); 12 labels
+ *  × ~3 words each = ~36 spoken words. Anything more gets truncated. */
+export const MAX_IMAGES = 12;
+
+/**
+ * Enumerate every `<img>` under a root element with metadata suitable
+ * for the describe-image / list-images actions.
+ *
+ * Pure function over the passed `root`. No mutation, no IO beyond DOM
+ * reads. jsdom-testable.
+ *
+ * @param root      - Root element; defaults to document.body
+ * @param maxImages - Max entries to return (default MAX_IMAGES)
+ * @returns Array of ImageEntry, in DOM order, capped at maxImages
+ */
+export function enumerateImages(
+  root?: HTMLElement,
+  maxImages: number = MAX_IMAGES,
+): ImageEntry[] {
+  const target = root ?? document?.body ?? null;
+  if (!target) return [];
+
+  const imgs = target.querySelectorAll('img');
+  const out: ImageEntry[] = [];
+  const cap = Math.max(0, maxImages);
+
+  for (let i = 0; i < imgs.length && out.length < cap; i++) {
+    const el = imgs[i] as HTMLImageElement;
+
+    // Skip <img> with no rendered size — zero-area boxes cause cdn-loop
+    // crop math. SSR images that haven't loaded yet will fall out.
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) continue;
+
+    const ariaLabel = el.getAttribute('aria-label')?.trim() ?? null;
+    const alt = el.getAttribute('alt')?.trim() ?? null;
+    let label = ariaLabel || alt || '';
+    if (!label) {
+      const srcValue = el.currentSrc || el.getAttribute('src') || '';
+      // Use the filename as a last-resort label: "Image at /foo/bar.jpg"
+      const filename = srcValue.split('/').pop()?.split('?')[0] ?? '';
+      label = filename ? `unlabeled image — ${filename}` : 'unlabeled image';
+    }
+
+    out.push({
+      index: out.length + 1,
+      label,
+      alt,
+      ariaLabel,
+      src: el.currentSrc || el.getAttribute('src') || null,
+      bbox: {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      },
+    });
+  }
+  return out;
+}
+
+/**
+ * Format an array of ImageEntry into a single spoken string the user
+ * can hear in one or two breaths. Index prefix lets the user say
+ * "describe image 1" without owning the label.
+ *
+ * @param entries - ImageEntry[] (max 12, truncate at the boundary)
+ * @returns Spoken list, or a single "this page has no images." line
+ */
+export function speakImageList(entries: ImageEntry[]): string {
+  if (entries.length === 0) return 'This page has no images.';
+  const visible = entries.slice(0, MAX_IMAGES);
+  const parts = visible.map(
+    (e) => `image ${e.index}: ${truncateSpoken(e.label, 60)}`,
+  );
+  const headline =
+    visible.length === entries.length
+      ? `This page has ${entries.length} image${entries.length === 1 ? '' : 's'}.`
+      : `This page has at least ${entries.length} images (the rest are below the fold).`;
+  return `${headline} ${parts.join('. ')}.`;
+}
+
+/** Trim a label to "speech-friendly" length without ellipsis punctuation. */
+function truncateSpoken(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return s.slice(0, Math.max(0, max - 1)).trimEnd();
+}
+

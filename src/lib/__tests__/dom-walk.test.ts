@@ -443,3 +443,107 @@ describe('implicit role mapping', () => {
     expect(result).toContain('[search]');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Image enumeration (Phase J + Image-describe feature)
+// ---------------------------------------------------------------------------
+
+import { enumerateImages, speakImageList, MAX_IMAGES } from '../dom-walk';
+
+describe('enumerateImages', () => {
+  function makeImg(src: string, alt: string, w = 200, h = 100): HTMLElement {
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = alt;
+    // jsdom doesn't layout — fake a bounding rect so enumerateImages
+    // doesn't skip zero-area boxes (we filter width<1 / height<1).
+    Object.defineProperty(img, 'getBoundingClientRect', {
+      value: () => ({
+        x: 0, y: 0, left: 0, top: 0, right: w, bottom: h,
+        width: w, height: h,
+      }),
+    });
+    return img;
+  }
+
+  it('returns empty array when no <img> elements exist', () => {
+    const root = fixture('<div>some text</div>');
+    expect(enumerateImages(root)).toEqual([]);
+  });
+
+  it('enumerates a single <img> with alt and aria-label', () => {
+    const root = fixture('<div></div>');
+    root.appendChild(makeImg('https://x/y.jpg', 'Cover photo'));
+    const out = enumerateImages(root);
+    expect(out.length).toBe(1);
+    expect(out[0].label).toBe('Cover photo');
+    expect(out[0].src).toBe('https://x/y.jpg');
+    expect(out[0].index).toBe(1);
+  });
+
+  it('uses aria-label when alt is missing', () => {
+    const root = fixture('<div></div>');
+    root.appendChild(makeImg('https://x/y.jpg', ''));
+    root.lastElementChild!.setAttribute('aria-label', 'Hero illustration');
+    const out = enumerateImages(root);
+    expect(out[0].label).toBe('Hero illustration');
+  });
+
+  it('falls back to filename when both alt and aria-label are empty', () => {
+    const root = fixture('<div></div>');
+    root.appendChild(makeImg('https://cdn.example.com/abc/cover.jpg', ''));
+    const out = enumerateImages(root);
+    expect(out[0].label).toMatch(/unlabeled image/);
+    expect(out[0].label).toMatch(/cover\.jpg/);
+  });
+
+  it('skips zero-area images (not yet rendered)', () => {
+    const root = fixture('<div></div>');
+    const img = document.createElement('img');
+    img.src = 'https://x/y.jpg';
+    img.alt = 'tiny';
+    Object.defineProperty(img, 'getBoundingClientRect', {
+      value: () => ({ x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
+    });
+    root.appendChild(img);
+    expect(enumerateImages(root).length).toBe(0);
+  });
+
+  it('respects maxImages cap', () => {
+    const root = fixture('<div></div>');
+    for (let i = 0; i < 5; i++) {
+      root.appendChild(makeImg(`https://x/${i}.jpg`, `Image ${i}`));
+    }
+    expect(enumerateImages(root, 3).length).toBe(3);
+    expect(enumerateImages(root, 999).length).toBe(5);
+  });
+});
+
+describe('speakImageList', () => {
+  function entry(label: string, index: number) {
+    return {
+      index, label,
+      alt: label, ariaLabel: null, src: 'x',
+      bbox: { x: 0, y: 0, width: 0, height: 0 },
+    };
+  }
+
+  it('returns "no images" line for empty input', () => {
+    expect(speakImageList([])).toMatch(/no images/i);
+  });
+
+  it('lists images with index prefixes', () => {
+    const out = speakImageList([entry('Cover', 1), entry('Hero', 2)]);
+    expect(out).toMatch(/image 1.*Cover/);
+    expect(out).toMatch(/image 2.*Hero/);
+  });
+
+  it('uses singular "image" for one entry', () => {
+    expect(speakImageList([entry('Solo', 1)])).toMatch(/1 image\b/);
+    expect(speakImageList([entry('A', 1), entry('B', 2)])).toMatch(/2 images\b/);
+  });
+
+  it('exports MAX_IMAGES as a non-zero cap', () => {
+    expect(MAX_IMAGES).toBeGreaterThan(0);
+  });
+});

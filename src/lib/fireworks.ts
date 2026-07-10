@@ -59,6 +59,48 @@ export const FIREWORKS_URL =
 export const DEV_MODEL_ID = 'accounts/fireworks/models/minimax-m3';
 
 // ---------------------------------------------------------------------------
+// Model capability table — quiet guardrail so describe-image-style actions
+// never waste an API call against a text-only model.
+//
+// Per DOC-MODEL-ADR.md, both our locked tiers (dev: MiniMax M3, prod:
+// Gemma 4 31B IT) are multimodal native. Unknown models default to
+// 'text' so the describe-image path speaks a clean error instead of
+// POSTing an image_url to a model that rejects it (Fireworks returns
+// 400 for image input on text-only models). The model never has to
+// lie about itself; we ask the table, not the LLM.
+//
+// If a user swaps `diamond_model` to a text-only server OK for cost
+// reasons (smaller open model on AMD), this table is the single place
+// to demote it. Production model ID deliberately not hardcoded per
+// the HARD RULE above; capability knowledge migrates to the prod
+// release op like model ID itself.
+// ---------------------------------------------------------------------------
+
+export type Modality = 'text' | 'vision';
+
+/** Known model capability overrides. Dev/MVP MiniMax M3 = vision. */
+export const MODEL_CAPABILITIES: Readonly<Record<string, Modality>> = Object.freeze({
+  // Verification date 2026-07-09: MiniMax M3 product page lists multimodal.
+  // Remove or demote if you swap dev model to a text-only serverless tier.
+  'accounts/fireworks/models/minimax-m3': 'vision',
+} as Record<string, Modality>);
+
+/**
+ * Return the modality for a given model id. Defaults to 'text' to
+ * fail-safe — an unknown model is presumed unable to handle image
+ * input until explicitly added to the table.
+ */
+export function getModelCapability(modelId: string): Modality {
+  return MODEL_CAPABILITIES[modelId] ?? 'text';
+}
+
+/** True iff the active model accepts image_url content parts. */
+export function isVisionCapable(modelId: string): boolean {
+  return getModelCapability(modelId) === 'vision';
+}
+
+
+// ---------------------------------------------------------------------------
 // Verbose LLM logging — opt-in PC QA diagnostic
 // ---------------------------------------------------------------------------
 

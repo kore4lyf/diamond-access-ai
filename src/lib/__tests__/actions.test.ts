@@ -19,6 +19,7 @@ import {
   confirmAction,
   checkConfirmation,
   hasPendingConfirm,
+  listImagesAction,
   type DiamondAction,
 } from '../actions';
 import type { PageSnapshot } from '../page-snapshot';
@@ -808,5 +809,46 @@ describe('confirmation phrasing', () => {
     );
     const result = checkConfirmation('proceed');
     expect(result.isConfirm).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listImagesAction — Image-describe feature (Phase J)
+// ---------------------------------------------------------------------------
+
+describe('listImagesAction', () => {
+  function makeImg(label: string): HTMLElement {
+    const img = document.createElement('img');
+    img.alt = label;
+    img.src = 'https://example.com/x.jpg';
+    Object.defineProperty(img, 'getBoundingClientRect', {
+      value: () => ({
+        x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 100,
+        width: 200, height: 100,
+      }),
+    });
+    return img;
+  }
+
+  it('reports no images when none are present', async () => {
+    const snap = makeSnapshot([]);
+    const out = await executeAction(
+      { action: 'list_images', description: '' },
+      snap,
+    );
+    expect(typeof out).toBe('string');
+    expect(out.toLowerCase()).toMatch(/no images/);
+  });
+
+  it('enumerates and indexes images in DOM order', async () => {
+    document.body.appendChild(makeImg('Cover photo'));
+    document.body.appendChild(makeImg('Hero illustration'));
+    const snap = makeSnapshot([]);
+    const out = await executeAction(
+      { action: 'list_images', description: '' },
+      snap,
+    );
+    expect(out).toMatch(/image 1.*Cover photo/i);
+    expect(out).toMatch(/image 2.*Hero illustration/i);
   });
 });

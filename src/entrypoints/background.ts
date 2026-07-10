@@ -155,6 +155,17 @@ export default defineBackground(() => {
         return true;
       }
 
+      // ── DESCRIBE_CROP: bbox-clipped image description ────────────────────
+      // Phase J + Image-describe feature. content.ts sends the resolved
+      // <img> bounding box (in screenshot pixel space, doubled by DPR)
+      // and we capture the active tab, crop, and call the vision LLM.
+      // Identical capture/fireworks plumbing to VLM_REQUEST, but bounded
+      // to a region so cost stays predictable.
+      if (msg.type === 'DESCRIBE_CROP') {
+        handleDescribeCrop(msg, sendResponse);
+        return true;
+      }
+
       // ── FIREWORKS_TEST: diagnostics — Phase C, kept for options page ────
       if (msg.type === 'FIREWORKS_TEST') {
         handleFireworksTest(msg, sendResponse);
@@ -791,6 +802,150 @@ async function handleVlmRequest(
       description: ERRORS.AI_UNAVAILABLE,
     });
     sw.stop('fallback');
+  }
+}
+
+/**
+ * DESCRIBE_CROP: Vision on a cropped region of the visible tab.
+ *
+ * Phase J + Image-describe feature. content.ts has already resolved
+ * an <img> to a bounding box keyed in screenshot pixel space (CSS
+ * pixels × devicePixelRatio). We:
+ *   1. captureVisibleTab on the active tab → full PNG data URL
+ *   2. drawImage onto an OffscreenCanvas at the bbox + 6% padding
+ *   3. downscale to ≤1024 max-edge (vision token ceiling)
+ *   4. POST the cropped PNG as image_url to callVLM
+ *   5. return the spoken description to the content script
+ *
+ * Distinct from handleVlmRequest (whole-viewport fallback for sparse
+ * DOM pages). Both share callVLM, PERSONA_BLOCK, and the same
+ * Fireworks endpoint — only the crop path differs.
+ */
+async function handleDescribeCrop(
+  msg: Record<string, unknown>,
+  sendResponse: (response?: unknown) => void,
+): Promise<void> {
+  const sw = new logger.Stopwatch('describe_crop', 'DESCRIBE_CROP round-trip');
+  try {
+    const bbox = msg.bbox as
+      | { x: number; y: number; width: number; height: number }
+      | undefined;
+    if (!bbox || bbox.width < 1 || bbox.height < 1) {
+      logger.warn('describe_crop', 'bad bbox', { bbox });
+      sendResponse({ description: '' });
+      sw.stop('empty-bbox');
+      return;
+    }
+
+    logger.info('describe_crop', 'captureVisibleTab requested for crop', { bbox });
+    const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
+
+    const croppedBase64 = await cropVisibleTabToBbox(dataUrl, bbox);
+    if (!croppedBase64) {
+      logger.warn('describe_crop', 'crop helper returned null', { bbox });
+      sendResponse({ description: '' });
+      sw.stop('empty-crop');
+      return;
+    }
+
+    const llmSw = new logger.Stopwatch('llm_response', 'DESCRIBE_CROP VLM call');
+    const description = await callVLM(
+      PERSONA_BLOCK,
+      croppedBase64,
+      'Describe this single image for a blind user. Plain speech. Two sentences max. No lists, no JSON.',
+    );
+    llmSw.stop();
+
+    logger.info('llm_response', 'DESCRIBE_CROP description', {
+      length: description.length,
+      pageUrl: msg.pageUrl,
+    });
+    sendResponse({ description });
+    sw.stop('done');
+  } catch (e: unknown) {
+    console.error('[background] DESCRIBE_CROP error:', e);
+    logger.error('describe_crop', 'failure', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+    // Surface a stripped error back to the content script — never leak
+    // the full exception string (it can contain Fireworks internal
+    // detail). The spoken fallback in ERRORS.AI_UNAVAILABLE is the
+    // single user-facing sentence we ship.
+    sendResponse({ description: ERRORS.AI_UNAVAILABLE });
+    sw.stop('fallback');
+  }
+}
+
+/**
+ * Crop a `data:image/png` URL to the given pixel bbox using an
+ * OffscreenCanvas. Returns the cropped region as a base64 PNG string
+ * (no `data:` prefix), ready for Fireworks image_url input.
+ *
+ * If the bbox extends beyond the captured bitmap (lazy layout shift,
+ * off-frame elements, or the crop math over-estimated), we clamp to
+ * the bitmap bounds so drawImage doesn't read garbage. The result is
+ * always ≤ 1024 max edge regardless of source resolution to keep
+ * vision-token consumption predictable.
+ *
+ * Pure of chrome.* — takes only a data URL + bbox, returns a string
+ * or null on failure. jsdom-friendly path isn't exercised in tests
+ * (captureVisibleTab requires real Chrome) but the shape mirrors
+ * what `image-capture.ts` would refactor into if more crops land.
+ */
+async function cropVisibleTabToBbox(
+  dataUrl: string,
+  bbox: { x: number; y: number; width: number; height: number },
+): Promise<string | null> {
+  try {
+    // dataURL → Blob → ImageBitmap (worker-safe path; no <img> needed)
+    const resp = await fetch(dataUrl);
+    const blob = await resp.blob();
+    const bitmap = await createImageBitmap(blob);
+    try {
+      // Clamp source coords into the bitmap. A bbox ending past the
+      // bitmap is a real symptom: captureVisibleTab is bounded to the
+      // visible viewport rect, not the full page rect. If the user
+      // asked to describe an off-screen image, the crop returns null
+      // and the caller speaks a clean error.
+      const sx = Math.max(0, Math.min(bitmap.width,  Math.floor(bbox.x)));
+      const sy = Math.max(0, Math.min(bitmap.height, Math.floor(bbox.y)));
+      const sw = Math.min(bitmap.width  - sx, Math.ceil(bbox.width));
+      const sh = Math.min(bitmap.height - sy, Math.ceil(bbox.height));
+      if (sw < 1 || sh < 1) return null;
+
+      // Downscale so the longer edge ≤ 1024 px. ~300 vision tokens for
+      // a JPEG/PNG at this size; double that for text-on-image content.
+      const scale = Math.min(1, 1024 / Math.max(sw, sh));
+      const tw = Math.max(1, Math.round(sw * scale));
+      const th = Math.max(1, Math.round(sh * scale));
+
+      const canvas = new OffscreenCanvas(tw, th);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, tw, th);
+
+      const outBlob = await canvas.convertToBlob({ type: 'image/png' });
+      const bytes = new Uint8Array(await outBlob.arrayBuffer());
+      // ArrayBuffer → base64 (safe in SW — no atob/btoa limits hit at
+      // single-region sizes ≤ 1024×1024).
+      let binary = '';
+      // Chunk to avoid stack overflow on large encodings.
+      const CHUNK = 0x8000;
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode.apply(
+          null,
+          Array.from(bytes.subarray(i, i + CHUNK)),
+        );
+      }
+      return btoa(binary);
+    } finally {
+      bitmap.close();
+    }
+  } catch (e) {
+    logger.warn('describe_crop', 'cropVisibleTabToBbox threw', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+    return null;
   }
 }
 

@@ -790,6 +790,20 @@ function isValidAction(obj: Record<string, unknown>): boolean {
         typeof obj.description === 'string'
       );
 
+    // ── Phase J + Image-describe feature: vision-action schemas. ─────────
+    // describe_image takes an elementIndex pointing at a snapshot-resolved
+    // <img>; list_images is parameter-free (the content script enumerates
+    // <img> elements directly via dom-walk.enumerateImages() and speaks
+    // the list — no LLM call needed for the list phase).
+    case 'describe_image':
+      return (
+        typeof obj.elementIndex === 'number' &&
+        typeof obj.description === 'string'
+      );
+
+    case 'list_images':
+      return typeof obj.description === 'string';
+
     case 'confirm':
       return (
         typeof obj.speech === 'string' &&

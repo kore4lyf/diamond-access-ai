@@ -18,6 +18,9 @@ import {
   tryParseJSON,
   FIREWORKS_URL,
   DEV_MODEL_ID,
+  isVisionCapable,
+  getModelCapability,
+  MODEL_CAPABILITIES,
 } from '../fireworks';
 
 // ---------------------------------------------------------------------------
@@ -528,5 +531,29 @@ describe('callVLM', () => {
     await expect(
       callVLM('sys', 'img'),
     ).rejects.toThrow('Malformed Fireworks response');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// MODEL_CAPABILITIES — quiet guardrail for describe-image-style actions
+// ---------------------------------------------------------------------------
+
+describe('MODEL_CAPABILITIES', () => {
+  it('tags the locked dev model as vision', () => {
+    expect(MODEL_CAPABILITIES[DEV_MODEL_ID]).toBe('vision');
+    expect(isVisionCapable(DEV_MODEL_ID)).toBe(true);
+  });
+
+  it('defaults unknown model ids to text (fail-safe)', () => {
+    expect(getModelCapability('some-org/models/unknown')).toBe('text');
+    expect(isVisionCapable('some-org/models/unknown')).toBe(false);
+  });
+
+  it('returns text for empty / nullish model ids', () => {
+    expect(isVisionCapable('')).toBe(false);
+  });
+
+  it('is frozen — accidental mutation would explode at runtime', () => {
+    expect(Object.isFrozen(MODEL_CAPABILITIES)).toBe(true);
   });
 });

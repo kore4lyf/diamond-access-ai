@@ -9,7 +9,12 @@ export default defineConfig({
   manifest: {
     name: 'Diamond Access AI',
     default_locale: 'en',
-    permissions: ['activeTab', 'storage'],
+    // 'tabs' lets chrome.tabs.captureVisibleTab() work from the service
+    // worker on any user-active tab. Without it the SW relies on activeTab
+    // short-lived grant inheriting through the content-script keydown
+    // gesture, which can drop in some Chrome MV3 states. Source-wise
+    // minimal: we never enumerate or modify tabs, only capture pixels.
+    permissions: ['activeTab', 'storage', 'tabs'],
     // Phase A gap-fix: declare the options page so Chrome surfaces it in
     // the right-click menu and `chrome://extensions` → Details → Options.
     // `open_in_tab: true` matches the existing full-page UX (the script

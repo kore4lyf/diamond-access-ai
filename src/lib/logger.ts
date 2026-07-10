@@ -55,6 +55,7 @@ export type LogCategory =
   | 'command'
   | 'page_load'
   | 'vlm'
+  | 'describe_crop'
   | 'llm_request'
   | 'llm_response'
   | 'stt'

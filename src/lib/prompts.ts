@@ -109,6 +109,8 @@ ACTION SCHEMAS (pick exactly one):
 {"action":"refresh","description":"<plain English>"}     ← reload current tab (location.reload())
 {"action":"click","elementIndex":<int>,"description":"<plain English>"}     ← click a button/link
 {"action":"fill","fields":[{"elementIndex":<int>,"value":"<text>"}],"description":"<plain English>"}     ← one or more fields
+{"action":"describe_image","elementIndex":<int>,"description":"<plain English>"}     ← describe a specific image the user named
+{"action":"list_images","description":"<plain English>"}     ← list every image on the page, user picks next
 {"action":"confirm","speech":"<confirmation request>","pendingAction":{...}}     ← irreversible actions
 
 ELEMENT-INDEX RULES:

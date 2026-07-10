@@ -20,6 +20,7 @@
 
 import { ERRORS } from './errors';
 import type { PageSnapshot } from './page-snapshot';
+import { enumerateImages, speakImageList } from './dom-walk';
 import * as logger from './logger';
 
 // ---------------------------------------------------------------------------
@@ -39,7 +40,9 @@ export type DiamondAction =
   | { action: 'confirm'; speech: string; pendingAction: DiamondAction }
   | { action: 'back'; description: string }
   | { action: 'forward'; description: string }
-  | { action: 'refresh'; description: string };
+  | { action: 'refresh'; description: string }
+  | { action: 'describe_image'; elementIndex: number; description: string }
+  | { action: 'list_images'; description: string };
 
 // ---------------------------------------------------------------------------
 // Module state (confirmation flow)
@@ -113,6 +116,14 @@ export async function executeAction(
 
       case 'fill':
         result = await fillAction(action.fields, snapshot, action.description);
+        break;
+
+      case 'describe_image':
+        result = await describeImageAction(action.elementIndex, snapshot, action.description);
+        break;
+
+      case 'list_images':
+        result = listImagesAction(action.description);
         break;
 
       case 'confirm':
@@ -642,6 +653,129 @@ function applySelectFill(element: HTMLSelectElement, value: string): void {
     element.value = value;
     element.dispatchEvent(new Event('change', { bubbles: true }));
   }
+}
+
+// ---------------------------------------------------------------------------
+// describeImageAction — Phase J + Image-describe feature
+//
+// Trigger: LLM emits {"action":"describe_image","elementIndex":N} after
+// the user names a specific image ("describe the cover photo", "what does
+// this dress look like"). This helper does the work the LLM can't:
+//
+//   1. resolveElement(N, snapshot) → <img> element
+//   2. capability gate: if active model is text-only, speak a clean
+//      error and exit before burning an API call
+//   3. compute bbox × devicePixelRatio → screenshot pixel-space coords
+//   4. sendMessage to background → capture+crop+vision LLM
+//   5. return the spoken description
+// ---------------------------------------------------------------------------
+
+/** Edge size cap for the cropped image — keeps vision token cost bounded. */
+const CROP_MAX_EDGE_PX = 1024;
+/** Padding around the bbox, expressed as fraction of the bbox dimension. */
+const CROP_PADDING_RATIO = 0.06;
+
+/**
+ * Resolve and execute a describe_image action.
+ *
+ * @param elementIndex - 1-based snapshot index of the <img> to describe
+ * @param snapshot     - Current page snapshot
+ * @param description  - Human description from the LLM (e.g., "Describing the cover photo.")
+ * @returns Spoken description (from the vision LLM) or a clean error string
+ */
+export async function describeImageAction(
+  elementIndex: number,
+  snapshot: PageSnapshot,
+  description: string,
+): Promise<string> {
+  const el = resolveElement(elementIndex, snapshot);
+  if (!el) {
+    logger.warn('action', 'describe_image: element not found', { elementIndex });
+    return ERRORS.ELEMENT_NOT_FOUND;
+  }
+  if (el.tagName !== 'IMG') {
+    logger.warn('action', 'describe_image: not an <img>', {
+      elementIndex,
+      tag: el.tagName,
+    });
+    return 'I can only describe images. Try a different element.';
+  }
+
+  // ── Capability gate: skip the API call when model is text-only ────────
+  let modelId: string | null = null;
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      const r = await chrome.storage.local.get('diamond_model');
+      modelId = (r.diamond_model as string | undefined) ?? null;
+    }
+  } catch { /* storage unavailable — fall through to default */ }
+  // Lazy import to avoid a circular dep at module load time
+  const { isVisionCapable } = await import('./fireworks');
+  if (modelId && !isVisionCapable(modelId)) {
+    logger.warn('action', 'describe_image: model not vision-capable', {
+      model: modelId,
+    });
+    return 'The current model cannot describe images. Switch to a vision-capable model in Options.';
+  }
+
+  // ── Bounding-rect computation in CSS pixels, scaled to screenshot ─────
+  const rect = el.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const padW = rect.width * CROP_PADDING_RATIO;
+  const padH = rect.height * CROP_PADDING_RATIO;
+  const bbox = {
+    x: Math.max(0, Math.floor((rect.left - padW) * dpr)),
+    y: Math.max(0, Math.floor((rect.top - padH) * dpr)),
+    width:  Math.ceil((rect.width  + padW * 2) * dpr),
+    height: Math.ceil((rect.height + padH * 2) * dpr),
+  };
+  logger.info('action', 'describe_image: requesting capture', {
+    elementIndex,
+    bbox,
+    dpr,
+    pageUrl: window.location.href,
+  });
+
+  try {
+    const response = (await chrome.runtime.sendMessage({
+      type: 'DESCRIBE_CROP',
+      bbox,
+      pageUrl: window.location.href,
+    })) as { description?: string } | undefined;
+    const got = response?.description?.trim();
+    if (!got) {
+      logger.warn('action', 'describe_image: empty response');
+      return ERRORS.AI_UNAVAILABLE;
+    }
+    return description ? `${description} ${got}` : got;
+  } catch (e) {
+    logger.error('action', 'describe_image: sendMessage failed', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+    return ERRORS.AI_UNAVAILABLE;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// listImagesAction — Phase J + Image-describe feature
+//
+// Trigger: LLM emits {"action":"list_images"} for "what images are on
+// this page?" / "list the images". No LLM call — enumerate the DOM
+// directly and speak the list. Vision cost is zero on the list phase;
+// describe_image only fires once the user picks an index.
+// ---------------------------------------------------------------------------
+
+/**
+ * Enumerate <img> elements, speak the list, return the spoken string.
+ *
+ * @param description - Spoken prefix the LLM suggested (usually empty)
+ * @returns Spoken list string, suitable for content.ts to pass to speak()
+ */
+export function listImagesAction(description: string): string {
+  const images = enumerateImages(typeof document !== 'undefined' ? document.body : undefined);
+  logger.info('action', 'list_images: enumerated', { count: images.length });
+  const spoken = speakImageList(images);
+  return description ? `${description} ${spoken}` : spoken;
 }
 
 // ---------------------------------------------------------------------------
