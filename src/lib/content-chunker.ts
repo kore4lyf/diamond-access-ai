@@ -222,10 +222,14 @@ export function chunkForSummarize(
  * mispronounce without normalization?
  *
  * Patterns:
- *   - bullet/symbol chars (•, ★, arrows)
- *   - decimal math (3.14) or operators
- *   - units (°C, km, €) that read awkwardly without expansion
- *   - emoji (U+1F300-U+1F9FF, misc symbols)
+ *   - bullet/symbol chars (•, ★, arrows, nbsp)
+ *   - math symbols (∑, √, ∫, ×, ÷, ±, ≠, ≤, ≥, ∞)
+ *   - spelled-out units (degrees, kilometers, hours, etc.)
+ *   - emoji + dingbats
+ *
+ * Note: bare decimals (3.14) and bare units (°C, £2, 5 m) are NOT flagged.
+ * They read acceptably as-is (three point one four, pounds two, five meters).
+ * Only when units are spelled out (kilometers, degrees) do we need expansion.
  *
  * Lazy-invoke only when this returns true (correction #1 from you:
  * model in the read path is wasteful — only invoke when needed for

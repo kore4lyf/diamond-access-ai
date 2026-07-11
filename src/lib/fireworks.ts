@@ -332,12 +332,12 @@ export async function callLLM(
     'diamond_model',
   ]);
 
-  const apiKey = result.diamond_api_key as string | undefined;
-  if (!apiKey) {
-    throw new Error('API key not configured. Open extension settings.');
-  }
+const apiKey = result.diamond_api_key as string | undefined;
+   if (!(apiKey && apiKey.trim())) {
+     throw new Error('API key not configured. Open extension settings.');
+   }
 
-  const selectedModel =
+   const selectedModel =
     model ?? (result.diamond_model as string | undefined) ?? DEV_MODEL_ID;
 
   return callLLMCore(
@@ -470,12 +470,12 @@ export async function callVLM(
     'diamond_model',
   ]);
 
-  const apiKey = result.diamond_api_key as string | undefined;
-  if (!apiKey) {
-    throw new Error('API key not configured. Open extension settings.');
-  }
+const apiKey = result.diamond_api_key as string | undefined;
+   if (!(apiKey && apiKey.trim())) {
+     throw new Error('API key not configured. Open extension settings.');
+   }
 
-  const model =
+   const model =
     (result.diamond_model as string | undefined) ?? DEV_MODEL_ID;
 
   const userContent: Array<Record<string, unknown>> = [

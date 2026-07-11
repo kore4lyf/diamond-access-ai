@@ -7,7 +7,8 @@
 
 import { defineBackground } from 'wxt/utils/define-background';
 import { callLLMWithRetry, callVLM, captureUserSpeech } from '../lib/fireworks';
-import { chunkForRead, needsModelCleanup } from '../lib/content-chunker';
+import { chunkForRead } from '../lib/content-chunker';
+import { cleanChunks } from '../lib/read-aloud-cleanup';
 import { summarizeChunks } from '../lib/map-reduce';
 import {
   PERSONA_BLOCK,
@@ -1103,36 +1104,17 @@ async function handleReadArticle(
         chunkCount: chunks.length,
       });
 
-      // Skip LLM cleanup when no API key — every call would auth-fail.
       const { diamond_api_key } = await chrome.storage.local.get('diamond_api_key');
-      const hasKey = Boolean(diamond_api_key);
+      const hasKey = Boolean((diamond_api_key as string | undefined)?.trim());
 
-      const cleaned: string[] = [];
-      const cleanedFlags: boolean[] = [];
-      for (const c of chunks) {
-        if (hasKey && needsModelCleanup(c)) {
-          try {
-            const cleanedText = await callLLMWithRetry(
-              'You are a TTS-friendly text normalizer. Output rewritten text only — no commentary, no JSON. Keep the original meaning; expand symbols, replace jargon, decolonize numbers (e.g. 1,000 → one thousand).',
-              c,
-            );
-            cleaned.push(cleanedText);
-            cleanedFlags.push(true);
-          } catch (err) {
-            logger.warn('read_article', 'cleanup failed for chunk', {
-              err: err instanceof Error ? err.message : String(err),
-            });
-            // Graceful degradation: cleanup failed for this chunk,
-            // use raw. NEVER drop — that's the bug we're killing.
-            cleaned.push(c);
-            cleanedFlags.push(false);
-          }
-        } else {
-          // No cleanup needed OR no API key — flag as success (no failure).
-          cleaned.push(c);
-          cleanedFlags.push(true);
-        }
-      }
+      const { chunks: cleaned, cleanedFlags } = await cleanChunks(
+        chunks,
+        hasKey,
+        (c) => callLLMWithRetry(
+          'You are a TTS-friendly text normalizer. Output rewritten text only — no commentary, no JSON. Keep the original meaning; expand symbols, replace jargon, decolonize numbers (e.g. 1,000 → one thousand).',
+          c,
+        ),
+      );
 
       logger.info('read_article', 'aloud: ready to stream', {
         chunks: cleaned.length,
