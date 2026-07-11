@@ -235,8 +235,8 @@ export function needsModelCleanup(chunk: string): boolean {
   if (!chunk) return false;
   return (
     /[\u2022\u2023\u2043\u2212\u00a0\u2605\u2606\u2190-\u21ff]/.test(chunk) || // bullets, nbsp, stars, arrows
-    /\b\d+\.\d+\b|[∑√∫×÷=±≠≤≥∞]/.test(chunk) || // decimal-ish or math
-    /\b\d+\s*(°[CFK]?|km|m|cm|mm|kg|g|lb|oz|€|£|¥|USD|EUR)\b/i.test(chunk) || // units
+    /[∑√∫×÷=±≠≤≥∞]/.test(chunk) || // math symbols
+    /\b(degrees?|kilometers?|miles?|hours?|minutes?|seconds?|meters?|pounds?|ounces?|kilograms?|grams?)\b/i.test(chunk) || // spelled units
     /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u.test(chunk) // emoji + dingbats
   );
 }

@@ -1103,10 +1103,14 @@ async function handleReadArticle(
         chunkCount: chunks.length,
       });
 
+      // Skip LLM cleanup when no API key — every call would auth-fail.
+      const { diamond_api_key } = await chrome.storage.local.get('diamond_api_key');
+      const hasKey = Boolean(diamond_api_key);
+
       const cleaned: string[] = [];
       const cleanedFlags: boolean[] = [];
       for (const c of chunks) {
-        if (needsModelCleanup(c)) {
+        if (hasKey && needsModelCleanup(c)) {
           try {
             const cleanedText = await callLLMWithRetry(
               'You are a TTS-friendly text normalizer. Output rewritten text only — no commentary, no JSON. Keep the original meaning; expand symbols, replace jargon, decolonize numbers (e.g. 1,000 → one thousand).',
@@ -1114,15 +1118,19 @@ async function handleReadArticle(
             );
             cleaned.push(cleanedText);
             cleanedFlags.push(true);
-          } catch {
+          } catch (err) {
+            logger.warn('read_article', 'cleanup failed for chunk', {
+              err: err instanceof Error ? err.message : String(err),
+            });
             // Graceful degradation: cleanup failed for this chunk,
             // use raw. NEVER drop — that's the bug we're killing.
             cleaned.push(c);
             cleanedFlags.push(false);
           }
         } else {
+          // No cleanup needed OR no API key — flag as success (no failure).
           cleaned.push(c);
-          cleanedFlags.push(false);
+          cleanedFlags.push(true);
         }
       }
 
