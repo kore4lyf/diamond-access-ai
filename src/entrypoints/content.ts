@@ -992,13 +992,13 @@ async function readArticleAloud(description: string): Promise<void> {
     return;
   }
 
-  // Graceful-degradation announce (only if cleanup failed on any chunk).
+  // Announce end-of-article (every time). Append cleanup detail only if needed.
   const rawCount = response.cleanedFlags?.filter((c) => !c).length ?? 0;
-  if (rawCount > 0) {
-    await speak(
-      `Finished. I had to keep ${rawCount} part${rawCount === 1 ? '' : 's'} raw because cleanup failed.`,
-    );
-  }
+  const finishedMsg =
+    rawCount > 0
+      ? `Finished reading. I had to keep ${rawCount} part${rawCount === 1 ? '' : 's'} raw because cleanup failed.`
+      : 'Finished reading.';
+  await speak(finishedMsg);
 }
 
 /**
