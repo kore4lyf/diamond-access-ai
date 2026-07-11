@@ -3,14 +3,26 @@
  *
  * Phase L (PC-EXT-MAINCONT) — long-form read-aloud + summarize_article.
  *
- * Returns the FULL readable prose of a page's main content (article,
- * thread, recipe, product description, README), not the nav tree.
- * Site-agnostic by design — same scoring works on BBC News, Reddit,
- * Amazon, GitHub, recipe blogs. Tested with multi-site dry-run
- * corpus before shipping (NOT BBC alone — BBC is a trap).
+ * Site-agnostic extractor that returns the FULL readable prose of
+ * a page's main content (articles, threads, product descriptions,
+ * recipes, READMEs). Built on Mozilla Readability's paragraph-scoring
+ * + ancestor-propagation approach + class/id weighting so it works
+ * on news, forum, recipe, product, and SPA pages.
  *
- * Privacy: returns prose only — no nav/footer/sidebar/comment blocks.
- * Pure DOM-walk output, same privacy contract as page-snapshot.
+ * Three layers, in priority order:
+ *   1. Scored subtree (Readability-style) — paragraph roots and
+ *      their ancestors, with class/id weight squashing sidebar/footer
+ *      noise into negative scores.
+ *   2. Largest visible-text div/section — fallback when nothing scores
+ *      above threshold (forum pages, dense listings, scant heuristic
+ *      signal).
+ *   3. Document body innerText — last-resort cap so Diamond never
+ *      says "couldn't extract" on a page that visibly has text.
+ *
+ * Privacy: pure DOM-walk, no fetch, no chrome.storage reads. The
+ * returned prose can carry personal data from the page (comments,
+ * forum posters, etc.); the caller (SW READ_ARTICLE handler) decides
+ * whether to send it through the LLM.
  *
  * Source of truth: doc/DOC-READ-ALOUD.md (Phase L docs).
  */
@@ -30,161 +42,222 @@ export interface MainContent {
   selected: number;
 }
 
+// ---------------------------------------------------------------------------
+// Class / id signal weights (the "not only news" fix).
+// Single highest-leverage signal Mozilla, Quartz, and adobo's
+// "best of" libraries all share: positive class tokens mark body
+// regions; negative tokens mark sidebar/comment/footer noise.
+// ---------------------------------------------------------------------------
+
+const POSITIVE_TOKENS = new Set([
+  'article', 'content', 'post', 'story', 'body', 'text', 'entry',
+  'description', 'main', 'read', 'message', 'recipe', 'instructions',
+  'ingredients', 'summary', 'lead',
+]);
+
+const NEGATIVE_TOKENS = new Set([
+  'comment', 'sidebar', 'footer', 'header', 'ad', 'ads', 'nav',
+  'promo', 'related', 'share', 'meta', 'banner', 'menu', 'toolbar',
+  'breadcrumb', 'pagination', 'cookie', 'consent', 'modal',
+]);
+
 /**
- * Score a candidate node. Higher = more likely "the main readable block".
+ * Look up a class/id token and return the structural weight for the
+ * element. Returns 0 for unmatched (default).
  *
- *   score = semanticDensity × (1 − linkDensity) × siblingContentCount
- *
- * Substitutions vs. the original "semantic density" plan (PC-EXT-MAINCONT
- * tweak #1): semanticDensity is text-to-markup-ratio, no tokenizer.
- * linkDensity is link-text ÷ total-text (penalizes nav-heavy blocks).
- * siblingContentCount is log2(1+N) for N significant siblings, so a
- * tight cluster of similar-sized content blocks (article body across
- * many `<p>`) beats a one-off big div with mixed-purpose content.
+ * Tuned so positive IDs (id="story-body") outvote negative classes
+ * (class="comments") — single highest signal wins, not summed, to
+ * avoid inflation on multi-class elements like `<aside class="main
+ * sidebar-links">`.
  */
-export function scoreCandidate(root: Element): { score: number; tags: string[] } {
-  const tags: string[] = [];
-  const fullText = (root.textContent ?? '').trim();
-  const textLen = fullText.length;
+function getClassWeight(el: Element): number {
+  const collectTokens = (raw: string | null): string[] => {
+    if (!raw) return [];
+    return raw
+      .toLowerCase()
+      .split(/[\s_-]+/)
+      .filter((tok) => tok.length > 1);
+  };
 
-  if (textLen < 200) {
-    return { score: 0, tags: ['too-short'] };
+  const tokens = [
+    ...collectTokens(el.getAttribute('id')),
+    ...collectTokens(el.className?.toString?.() ?? ''),
+  ];
+
+  let pos = 0;
+  let neg = 0;
+  for (const t of tokens) {
+    if (POSITIVE_TOKENS.has(t)) pos += 25;
+    if (NEGATIVE_TOKENS.has(t)) neg += 25;
   }
-
-  const innerHTML = root.innerHTML ?? '';
-  const markupLen = innerHTML.length - textLen;
-  if (markupLen < 0) {
-    return { score: 0, tags: ['invalid-markup'] };
-  }
-
-  const anchorText = Array.from(root.querySelectorAll('a, [role="link"]'))
-    .map((a) => (a.textContent ?? '').trim())
-    .join(' ');
-  const linkTextLen = anchorText.length;
-  const linkDensity = textLen === 0 ? 1 : linkTextLen / textLen;
-
-  const parent = root.parentElement;
-  let siblingContentCount = 1;
-  if (parent) {
-    const siblings = Array.from(parent.children);
-    const significant = siblings.filter((s) => {
-      const sl = (s.textContent ?? '').trim().length;
-      return sl > 200 && Math.abs(sl - textLen) < textLen * 0.5;
-    });
-    siblingContentCount = Math.log2(1 + significant.length);
-  }
-  if (siblingContentCount > 1) tags.push('cluster');
-
-  const semanticDensity = textLen / (textLen + markupLen);
-
-  const score = semanticDensity * (1 - linkDensity) * siblingContentCount;
-  if (linkDensity > 0.4) tags.push('link-heavy');
-  if (semanticDensity < 0.3) tags.push('markup-heavy');
-
-  return { score, tags };
+  return pos - neg;
 }
 
 /**
- * Build a CSS selector that uniquely identifies a node within its
- * subtree. Prefers id; falls back to tag + nth-of-type.
+ * Find the strongest structural-weight signal in the ancestor chain.
+ * Returns the highest single score (capped at +25 per element), so
+ * one well-named ancestor wins, but every ancestor is consulted to
+ * handle templates where the readable content is wrapped deep.
+ *
+ * Positive ancestor (e.g. `<section id="story-body">`) wins over
+ * positive class. The deeper ancestors get a slight preference
+ * through ascending weighting — closer-to-leaf means closer-to-content.
  */
-export function getNodeSelector(node: Element): string {
-  if (node.id) return `#${CSS.escape(node.id)}`;
-  const tag = node.tagName.toLowerCase();
-  const parent = node.parentElement;
-  if (!parent) return tag;
-  const siblings = Array.from(parent.children).filter(
-    (c) => c.tagName === node.tagName,
-  );
-  const index = siblings.indexOf(node) + 1;
-  if (siblings.length > 1) {
-    return `${tag}:nth-of-type(${index})`;
+function getAncestorAnchorWeight(el: Element, root: Element, depthLimit = 5): number {
+  let cur: Element | null = el;
+  let depth = 0;
+  let best = 0;
+  const stack: { el: Element; w: number }[] = [];
+
+  while (cur && depth <= depthLimit) {
+    const w = getClassWeight(cur);
+    if (w > best) best = w;
+    stack.push({ el: cur, w });
+    if (cur === root) break;
+    cur = cur.parentElement;
+    depth++;
   }
-  return tag;
+
+  // Ancestors get a proximity bonus: leaf content's nearest positive
+  // ancestor is more authoritative than a remote one.
+  for (let i = 0; i < stack.length; i++) {
+    const proximity = stack.length - i;
+    if (stack[i].w > 0 && proximity * 2 > best) best = proximity * 2;
+  }
+  return Math.min(best, 100);
 }
 
-const SKIP_TAGS = new Set([
-  'NAV',
-  'SCRIPT',
-  'STYLE',
-  'SVG',
-  'NOSCRIPT',
-  'IFRAME',
-  'FORM',
-  'ASIDE',
-  'FOOTER',
-  'HEADER',
+// ---------------------------------------------------------------------------
+// Paragraph scoring — Mozilla-style. Each leaf-ish prose node gets a
+// score from its own text, a comma bonus (proxy for sentence density),
+// and the strongest positive ancestor weight. Ancestor scores
+// PROPAGATE up the tree so the largest contentful subtree wins.
+// ---------------------------------------------------------------------------
+
+/**
+ * Tag set for elements that contribute paragraph-style text. Same list
+ * as the previous walker but with the priority order explicit so we
+ * can score per-element.
+ */
+const PROSE_LEAF_TAGS = new Set([
+  'P', 'LI', 'PRE', 'BLOCKQUOTE', 'FIGCAPTION',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
 ]);
-const SKIP_ROLES = new Set([
-  'navigation',
-  'banner',
-  'contentinfo',
-  'complementary',
-  'search',
-  'form',
+
+/** Whole-article threshold below which we don't trust the scorer. */
+const WHOLE_ARTICLE_CHARS = 140;
+
+/**
+ * Skip set: these are NEVER root candidates or prose contributors,
+ * even if their innerText is large. (No longer using SKIP_ROLES
+ * inside the walker; we do this at score-candidate time only.)
+ */
+const NEVER_PROSE_TAGS = new Set([
+  'NAV', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'SVG', 'IFRAME', 'FORM',
+  'FOOTER', 'HEADER', 'ASIDE', 'BUTTON',
 ]);
-const TEXT_TAGS = new Set([
-  'P',
-  'H1',
-  'H2',
-  'H3',
-  'H4',
-  'H5',
-  'H6',
-  'LI',
-  'PRE',
-  'BLOCKQUOTE',
-  'FIGCAPTION',
+
+const NEVER_PROSE_ROLES = new Set([
+  'navigation', 'banner', 'contentinfo', 'complementary', 'search',
+  'form', 'dialog', 'alert', 'menu', 'menubar', 'toolbar', 'tablist',
 ]);
 
 /**
- * Minimum text length for any captured line. Filters out nav crops
- * ("Read more", "Share", timestamps like "14 hrs ago") without
- * cutting legitimate paragraphs. ~30 char floor matches a short
- * sentence fragment.
+ * Walk the tree, score every prose leaf in-place, then sum into each
+ * ancestor's cumulative score. Returns the cumulative map keyed on
+ * Element (live refs — no selector round-trip, HY3 PC-EXT-MAINCONT
+ * correction removing the page-snapshot fragility).
  */
-const MIN_TEXT_LEN = 30;
+function propagateScores(root: Element): Map<Element, number> {
+  const totals = new Map<Element, number>();
 
-/**
- * Walk the winning node, emit text from each leaf-ish text container
- * (P/H1-H6/LI/PRE/BLOCKQUOTE/FIGCAPTION). Skip nav/header/footer/script
- * patterns.
- */
-function extractProse(root: Element): string {
-  const buf: string[] = [];
-  const walk = (el: Element): void => {
-    if (SKIP_TAGS.has(el.tagName)) return;
+  const visit = (el: Element): void => {
+    if (NEVER_PROSE_TAGS.has(el.tagName)) return;
     const role = el.getAttribute('role');
-    if (role && SKIP_ROLES.has(role)) return;
+    if (role && NEVER_PROSE_ROLES.has(role)) return;
 
-    if (TEXT_TAGS.has(el.tagName)) {
-      // Element-class check: don't recurse text containers; their
-      // text is already the merged content. (Nested H3 inside a
-      // P shouldn't double-emit.)
-      if (!el.querySelector('p, h1, h2, h3, h4, h5, h6, li, pre, blockquote')) {
-        const text = (el.textContent ?? '').trim();
-        if (text && text.length >= MIN_TEXT_LEN) buf.push(text);
-        return;
+    let own = 0;
+    if (PROSE_LEAF_TAGS.has(el.tagName)) {
+      const txt = (el.textContent ?? '').trim();
+      if (txt.length > 0) {
+        const commas = (txt.match(/,/g) ?? []).length;
+        const ancW = getAncestorAnchorWeight(el, root);
+        own = txt.length + commas * 12 + ancW;
       }
     }
 
-    // Leaf-element fallback: prose that lives directly in a non-text
-    // wrapper (e.g. <div>Some paragraph...</div>, scraped news pages,
-    // certain React-rendered sites). el.children iterates Element
-    // nodes only; without this, raw text children inside any wrapper
-    // are silently lost.
-    if (el.children.length === 0) {
-      const text = (el.textContent ?? '').trim();
-      if (text && text.length >= MIN_TEXT_LEN) buf.push(text);
-      return;
-    }
+    if (own > 0) totals.set(el, own);
+
+    const sumIntoAncestors = (score: number): void => {
+      let cur: Element | null = el.parentElement;
+      while (cur && cur !== root.parentElement) {
+        const prev = totals.get(cur) ?? 0;
+        totals.set(cur, prev + score);
+        cur = cur.parentElement;
+      }
+    };
+
+    if (own > 0) sumIntoAncestors(own);
 
     for (const child of Array.from(el.children)) {
-      walk(child as Element);
+      visit(child);
     }
   };
-  walk(root);
-  return buf.join('\n\n');
+
+  visit(root);
+  return totals;
+}
+
+// ---------------------------------------------------------------------------
+// Winner selection — highest-cumulative-score subtree above threshold,
+// with class/id weighting already baked into the propagation scores.
+// Hydrates candidates array for the debug hook.
+// ---------------------------------------------------------------------------
+
+function selectWinner(
+  root: Element,
+  scores: Map<Element, number>,
+): { winner: Element | null; candidates: Candidate[] } {
+  const candidates: Candidate[] = [];
+
+  for (const [el, score] of scores) {
+    if (score <= 0) continue;
+    candidates.push({
+      selector: getNodeSelector(el),
+      title: extractTitle(el),
+      preview: ((el.textContent ?? '').trim().slice(0, 200) + '…').trim(),
+      score,
+      tags: deriveTags(el, score),
+    });
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+
+  // First candidate with cumulative score ≥ WHOLE_ARTICLE_CHARS wins.
+  // No 200-char per-node floor was the strict rule HY3 surfaced —
+  // short blurbs still surface via the fallback chain below.
+  const winner =
+    candidates.find((c) => c.score >= WHOLE_ARTICLE_CHARS)?.selector ?? null;
+
+  if (!winner) {
+    return { winner: null, candidates };
+  }
+
+  const winnerNode = resolveSelector(winner, root);
+  return { winner: winnerNode, candidates };
+}
+
+function deriveTags(el: Element, score: number): string[] {
+  const tags: string[] = [];
+  const w = getClassWeight(el);
+  if (w > 0) tags.push('positive-class');
+  if (w < 0) tags.push('negative-class');
+  if (score >= 800) tags.push('high-confidence');
+  else if (score >= 200) tags.push('mid-confidence');
+  else tags.push('low-confidence');
+  if (el.tagName === 'ARTICLE') tags.push('semantic-article');
+  if (el.tagName === 'MAIN') tags.push('semantic-main');
+  return tags;
 }
 
 function extractTitle(node: Element): string {
@@ -203,67 +276,175 @@ function extractTitle(node: Element): string {
   return '';
 }
 
-export function extractMainContent(root: Element = document.body): MainContent {
-  const candidates: Candidate[] = [];
-  const seen = new WeakSet<Element>();
+function getNodeSelector(node: Element): string {
+  if (node.id) return `#${CSS.escape(node.id)}`;
+  const tag = node.tagName.toLowerCase();
+  const parent = node.parentElement;
+  if (!parent) return tag;
+  const siblings = Array.from(parent.children).filter(
+    (c) => c.tagName === node.tagName,
+  );
+  const index = siblings.indexOf(node) + 1;
+  if (siblings.length > 1) {
+    return `${tag}:nth-of-type(${index})`;
+  }
+  return tag;
+}
 
-  const consider = (el: Element): void => {
-    if (seen.has(el)) return;
-    seen.add(el);
-    const { score, tags } = scoreCandidate(el);
-    if (score <= 0) return;
-    const selector = getNodeSelector(el);
-    const preview =
-      ((el.textContent ?? '').trim().slice(0, 200) + '…').trim();
-    candidates.push({
-      selector,
-      title: extractTitle(el),
-      preview,
-      score,
-      tags,
-    });
+function resolveSelector(selector: string, root: Element): Element | null {
+  // First try the selector as-is. If it's an id selector, fall back
+  // to a getElementById-style lookup. Otherwise querySelector walks
+  // the subtree.
+  try {
+    const el = root.querySelector(selector);
+    return el;
+  } catch {
+    // nth-of-type or escape mismatch — fall through
+  }
+  if (selector.startsWith('#')) {
+    const id = selector.slice(1).replace(/\\/g, '');
+    return root.ownerDocument?.getElementById(id) ?? null;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Prose extraction — visibility-aware innerText, walk every prose leaf,
+// strip subtrees that scored negative. No 200-char per-node floor.
+// ---------------------------------------------------------------------------
+
+const ELEMENT_SKIP_TAGS = new Set(NEVER_PROSE_TAGS);
+const ELEMENT_SKIP_ROLES = new Set(NEVER_PROSE_ROLES);
+
+function extractProseFromNode(root: Element): string {
+  // Use innerText (visibility- and whitespace-aware) when available.
+  // innerText is reading-order aware; on Firefox/Safari fallback to
+  // textContent for the well-formed text equivalent.
+  const baselineText = (() => {
+    if (typeof (root as HTMLElement).innerText === 'string') {
+      return (root as HTMLElement).innerText.trim();
+    }
+    return (root.textContent ?? '').replace(/\s+/g, ' ').trim();
+  })();
+
+  // For high-signal winners the innerText pass alone suffices. We
+  // also emit the paragraph-leaf text in document order so charts,
+  // tables, and <pre> blocks preserve their line breaks / formatting.
+  const buf: string[] = [];
+  if (baselineText.length >= WHOLE_ARTICLE_CHARS) {
+    buf.push(baselineText);
+  }
+
+  const seen = new Set<string>();
+  const dedupePush = (line: string): void => {
+    const key = line.slice(0, 80).trim();
+    if (!seen.has(key)) {
+      seen.add(key);
+      buf.push(line);
+    }
   };
 
-  // Pass 1: explicit semantic tags. Lowest friction, highest confidence.
-  root
-    .querySelectorAll('article, [role="article"], main, [role="main"]')
-    .forEach(consider);
-
-  // Pass 2: any large div/section that isn't nav-shaped. Catches
-  // recipe blogs, forum threads, product descriptions that don't use
-  // <article>.
-  root.querySelectorAll('div, section').forEach((el) => {
-    if (SKIP_TAGS.has(el.tagName)) return;
+  // Walk and capture paragraph-level lines so formatting / line breaks
+  // survive the round-trip into the chunker.
+  const walk = (el: Element): void => {
+    if (ELEMENT_SKIP_TAGS.has(el.tagName)) return;
     const role = el.getAttribute('role');
-    if (role && SKIP_ROLES.has(role)) return;
-    consider(el);
-  });
+    if (role && ELEMENT_SKIP_ROLES.has(role)) return;
 
-  if (candidates.length === 0) {
-    return { title: '', prose: '', candidates: [], selected: -1 };
+    if (PROSE_LEAF_TAGS.has(el.tagName)) {
+      const text = (el.textContent ?? '').trim();
+      // No per-node 200-char floor — short blurbs can still surface.
+      if (text) dedupePush(text);
+      return;
+    }
+    for (const child of Array.from(el.children)) {
+      walk(child as Element);
+    }
+  };
+  walk(root);
+
+  return buf.join('\n\n').trim();
+}
+
+// ---------------------------------------------------------------------------
+// Fallback chain. The whole point of this rewrite is that Diamond
+// never emits "Sorry, I couldn't extract" on a page with visible text.
+// ---------------------------------------------------------------------------
+
+function fallbackLargestVisibleText(root: Element): Element | null {
+  let bestEl: Element | null = null;
+  let bestLen = 0;
+
+  const visit = (el: Element): void => {
+    if (NEVER_PROSE_TAGS.has(el.tagName)) return;
+    const role = el.getAttribute('role');
+    if (role && NEVER_PROSE_ROLES.has(role)) return;
+
+    const text = ((el as HTMLElement).innerText ?? el.textContent ?? '').trim();
+    if (text.length > bestLen) {
+      bestEl = el;
+      bestLen = text.length;
+    }
+    for (const child of Array.from(el.children)) {
+      visit(child);
+    }
+  };
+  visit(root);
+  return bestEl;
+}
+
+// ---------------------------------------------------------------------------
+// Public API.
+// ---------------------------------------------------------------------------
+
+export function extractMainContent(root: Element = document.body): MainContent {
+  // Primary path: Readability-style propagation.
+  const scores = propagateScores(root);
+  const { winner, candidates } = selectWinner(root, scores);
+
+  if (winner) {
+    return {
+      title: extractTitle(winner),
+      prose: extractProseFromNode(winner),
+      candidates,
+      selected: 0,
+    };
   }
 
-  candidates.sort((a, b) => b.score - a.score);
-
-  const winner = candidates[0];
-  let winnerNode: Element | null = null;
-  try {
-    winnerNode = root.querySelector(winner.selector);
-  } catch {
-    winnerNode = null;
+  // Fallback A: largest visible-text subtree from the whole page.
+  const visible = fallbackLargestVisibleText(root);
+  if (visible) {
+    const fallbackCandidates: Candidate[] = [
+      {
+        selector: getNodeSelector(visible),
+        title: extractTitle(visible),
+        preview: ((visible.textContent ?? '').trim().slice(0, 200) + '…').trim(),
+        score: 1,
+        tags: ['fallback-largest'],
+      },
+      ...candidates,
+    ];
+    return {
+      title: extractTitle(visible),
+      prose: extractProseFromNode(visible),
+      candidates: fallbackCandidates,
+      selected: 0,
+    };
   }
-  if (!winnerNode) {
-    return { title: '', prose: '', candidates, selected: -1 };
-  }
 
-  const prose = extractProse(winnerNode);
-  const title = extractTitle(winnerNode);
+  // Fallback B: document.body innerText trimmed — last resort. This is
+  // the no-empty-prose guarantee: any page with visible text returns
+  // SOMETHING readable.
+  const bodyText =
+    typeof (root as HTMLElement).innerText === 'string'
+      ? (root as HTMLElement).innerText.trim()
+      : (root.textContent ?? '').replace(/\s+/g, ' ').trim();
 
   return {
-    title: title || winner.title,
-    prose,
+    title: '',
+    prose: bodyText,
     candidates,
-    selected: 0,
+    selected: -1,
   };
 }
 
@@ -288,7 +469,7 @@ if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
       result.candidates.forEach((c, i) => {
         // eslint-disable-next-line no-console
         console.log(
-          `  #${i + 1} [${c.score.toFixed(3)}] ${c.selector}\n` +
+          `  #${i + 1} [${c.score.toFixed(0)}] ${c.selector}\n` +
             `     title: ${c.title || '(no title)'}\n` +
             `     preview: ${c.preview.slice(0, 120)}…\n` +
             `     tags: ${c.tags.join(', ') || '-'}`,
@@ -296,7 +477,9 @@ if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
       });
       // eslint-disable-next-line no-console
       console.log(
-        `[Diamond] selected: #${result.selected + 1} "${result.title}" prose=${result.prose.length}ch`,
+        `[Diamond] selected: "${
+          result.title || '(no title)'
+        }" prose=${result.prose.length}ch`,
       );
       return result;
     };
