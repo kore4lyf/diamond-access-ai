@@ -138,6 +138,14 @@ const TEXT_TAGS = new Set([
 ]);
 
 /**
+ * Minimum text length for any captured line. Filters out nav crops
+ * ("Read more", "Share", timestamps like "14 hrs ago") without
+ * cutting legitimate paragraphs. ~30 char floor matches a short
+ * sentence fragment.
+ */
+const MIN_TEXT_LEN = 30;
+
+/**
  * Walk the winning node, emit text from each leaf-ish text container
  * (P/H1-H6/LI/PRE/BLOCKQUOTE/FIGCAPTION). Skip nav/header/footer/script
  * patterns.
@@ -155,9 +163,20 @@ function extractProse(root: Element): string {
       // P shouldn't double-emit.)
       if (!el.querySelector('p, h1, h2, h3, h4, h5, h6, li, pre, blockquote')) {
         const text = (el.textContent ?? '').trim();
-        if (text) buf.push(text);
+        if (text && text.length >= MIN_TEXT_LEN) buf.push(text);
         return;
       }
+    }
+
+    // Leaf-element fallback: prose that lives directly in a non-text
+    // wrapper (e.g. <div>Some paragraph...</div>, scraped news pages,
+    // certain React-rendered sites). el.children iterates Element
+    // nodes only; without this, raw text children inside any wrapper
+    // are silently lost.
+    if (el.children.length === 0) {
+      const text = (el.textContent ?? '').trim();
+      if (text && text.length >= MIN_TEXT_LEN) buf.push(text);
+      return;
     }
 
     for (const child of Array.from(el.children)) {
