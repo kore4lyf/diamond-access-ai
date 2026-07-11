@@ -78,8 +78,21 @@ const IMPLICIT_ROLES: Record<string, string | ((el: Element) => string | null)> 
   'H6':         'heading',
 };
 
-/** Default maximum output length in characters. */
-const DEFAULT_MAX_CHARS = 1500;
+/**
+ * Default maximum output length in characters.
+ *
+ * PC-QA Round 3 — BBC News homepage regression: at 1500 chars,
+ * `truncateLines` summarises depth ≥ 3 content into count summaries
+ * like `… 8 more children (article)`. That collapsed every hero
+ * `<h2>` headline into a count while leaving the shallower "More to
+ * explore" `<ul><li><a>` flat-link pattern intact, so the LLM picked
+ * the "More to explore" headlines instead of the actual top of the
+ * page. Bumping to 4000 chars fits BBC's full structure (≈5–7k
+ * uncompressed) at ~70% without summarising the article list.
+ * Token cost: ~1000 input tokens vs ~375 previously — well under
+ * Fireworks' 8k context. Small pages are unaffected.
+ */
+const DEFAULT_MAX_CHARS = 4000;
 
 /** Truncation depth threshold — keep these levels fully. */
 const KEEP_DEPTH = 3;

@@ -219,22 +219,27 @@ describe('extractPageStructureFromRoot', () => {
 
 describe('truncation', () => {
   it('truncates deep elements and adds summary line', () => {
-    // Create nested sections to push content beyond 1500 chars
-    // 12 levels of <section> with buttons at each level
-    // At 1500 chars, depth 0-2 keeps (section×3 + buttons)
-    // depth 3+ should be summarized
+    // Create nested sections to push content beyond the truncation cap.
+    // 15 levels of <section> with buttons at each level.
+    // At maxChars=400, depth 0-2 keeps (section×3 + buttons at those
+    // depths); depth 3+ should be summarized as a count line.
+    //
+    // PC-QA Round 3: DEFAULT_MAX_CHARS was bumped from 1500 to 4000
+    // so BBC's full structure survives. This test explicitly passes a
+    // small cap so it exercises truncation behavior independent of the
+    // global default.
     let html = '';
     for (let i = 0; i < 15; i++) {
       html += '<section>';
     }
-    // Add enough buttons deep inside to exceed 1500 chars
+    // Add enough buttons deep inside to exceed the 400-char cap
     for (let i = 0; i < 20; i++) {
       html += `<button>Button number ${i} at deep level</button>`;
     }
     html += '</section>'.repeat(15);
 
     const root = fixture(html);
-    const result = extractPageStructureFromRoot(root);
+    const result = extractPageStructureFromRoot(root, 400);
 
     // Should have a summary line
     expect(result).toContain('more children');
