@@ -80,6 +80,11 @@ let lastActivationSource: ActivationSource = 'sw';
  */
 const activeTimers = new Set<string>();
 function tStart(label: string): void {
+  if (activeTimers.has(label)) {
+    // Already tracking this timer — don't re-enter console.time
+    // (Chrome warns "Timer 'x' already exists").
+    return;
+  }
   activeTimers.add(label);
   console.time(label);
 }
@@ -419,6 +424,11 @@ async function activateDiamond(): Promise<void> {
  * Confirmed users continue, unconfirmed commands go to LLM.
  */
 async function activateCommandMode(): Promise<void> {
+  // Set the re-entry guard BEFORE any timer or async work so a
+  // second Alt+D press during the command pipeline (including between
+  // STT completion and the try block) is blocked by activateDiamond's
+  // isProcessing check. Early-return paths must set it back to false.
+  isProcessing = true;
   tStart('diamond-command');
 
   playBeep('awake');
@@ -434,6 +444,7 @@ async function activateCommandMode(): Promise<void> {
     // intentionally empty — don't fall back to a spoken message which
     // would defeat the design.
     tEnd('diamond-command');
+    isProcessing = false;
     logger.debug('user', 'no transcript (Alt+D released)');
     await speak(ERRORS.STT_NO_SPEECH);
     return;
@@ -454,6 +465,7 @@ async function activateCommandMode(): Promise<void> {
       // try/finally block below, so without this timeEnd we'd leak a
       // "Timer started but never ended" console warning on every confirm.
       tEnd('diamond-command');
+      isProcessing = false;
       const snap = buildPageSnapshot();
       const result = await executeAction(confirmResult.action, snap);
       if (result) await speak(result);
