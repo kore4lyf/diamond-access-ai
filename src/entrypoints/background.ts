@@ -178,7 +178,7 @@ export default defineBackground(() => {
 
       // ── VLM_REQUEST: screenshot + vision analysis ────────────────────────
       if (msg.type === 'VLM_REQUEST') {
-        handleVlmRequest(sendResponse);
+        handleVlmRequest(msg, sender, sendResponse);
         return true;
       }
 
@@ -821,14 +821,14 @@ async function handlePageLoad(
  * the visual description.
  */
 async function handleVlmRequest(
+  msg: Record<string, unknown>,
+  sender: chrome.runtime.MessageSender,
   sendResponse: (response?: unknown) => void,
 ): Promise<void> {
   const sw = new logger.Stopwatch('vlm', 'VLM round-trip');
   try {
     logger.info('vlm', 'captureVisibleTab requested');
-    const dataUrl = await chrome.tabs.captureVisibleTab({
-      format: 'png',
-    });
+    const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
 
     // Extract base64 from data URL
     const base64 = dataUrl.split(',')[1] ?? '';
