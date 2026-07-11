@@ -285,10 +285,27 @@ describe('fallback chain', () => {
 // ---------------------------------------------------------------------------
 
 describe('multi-site corpus shapes', () => {
-  // TODO(PC-EXT-RECIPE): baselineText push then dedupePush on li
-  // children double-emits and dedupes against the same first 80
-  // chars, dropping steps / ingredients on certain list structures.
-  it.todo('recipe pages emit ingredients + steps', () => {
+  // Regression: BBC multi-paragraph articles must not duplicate content.
+  // The extractor must emit each paragraph exactly once.
+  it('BBC-style long article does not double-emit paragraphs', () => {
+    const lastPara = 'This is the final paragraph of the BBC article.';
+    fixture(`
+      <article>
+        <h1>BBC News Story</h1>
+        <p>First paragraph of the article with some opening content here.</p>
+        <p>Second paragraph continues the story with more details about the event.</p>
+        <p>Third paragraph provides additional context and background information.</p>
+        <p>${lastPara}</p>
+      </article>
+    `);
+
+    const result = extractMainContent();
+    expect(result.prose).toContain('BBC News Story');
+    // Each paragraph must appear exactly once
+    expect(result.prose.indexOf(lastPara)).toBe(result.prose.lastIndexOf(lastPara));
+  });
+
+  it('recipe pages emit ingredients + steps', () => {
     fixture(`
       <article class="recipe">
         <h1>Chicken Bhuna</h1>
@@ -312,7 +329,7 @@ describe('multi-site corpus shapes', () => {
     `);
 
     const result = extractMainContent();
-    expect(result.prose).toContain('Chicken thighs');
+    expect(result.prose).toContain('chicken thighs');
     expect(result.prose).toContain('garam masala');
     expect(result.prose).toContain('Heat oil in a pan');
     expect(result.prose).toContain('simmer for 25 minutes');

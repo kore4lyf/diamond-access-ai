@@ -317,9 +317,6 @@ const ELEMENT_SKIP_TAGS = new Set(NEVER_PROSE_TAGS);
 const ELEMENT_SKIP_ROLES = new Set(NEVER_PROSE_ROLES);
 
 function extractProseFromNode(root: Element): string {
-  // Use innerText (visibility- and whitespace-aware) when available.
-  // innerText is reading-order aware; on Firefox/Safari fallback to
-  // textContent for the well-formed text equivalent.
   const baselineText = (() => {
     if (typeof (root as HTMLElement).innerText === 'string') {
       return (root as HTMLElement).innerText.trim();
@@ -327,14 +324,7 @@ function extractProseFromNode(root: Element): string {
     return (root.textContent ?? '').replace(/\s+/g, ' ').trim();
   })();
 
-  // For high-signal winners the innerText pass alone suffices. We
-  // also emit the paragraph-leaf text in document order so charts,
-  // tables, and <pre> blocks preserve their line breaks / formatting.
   const buf: string[] = [];
-  if (baselineText.length >= WHOLE_ARTICLE_CHARS) {
-    buf.push(baselineText);
-  }
-
   const seen = new Set<string>();
   const dedupePush = (line: string): void => {
     const key = line.slice(0, 80).trim();
@@ -344,8 +334,6 @@ function extractProseFromNode(root: Element): string {
     }
   };
 
-  // Walk and capture paragraph-level lines so formatting / line breaks
-  // survive the round-trip into the chunker.
   const walk = (el: Element): void => {
     if (ELEMENT_SKIP_TAGS.has(el.tagName)) return;
     const role = el.getAttribute('role');
@@ -353,7 +341,6 @@ function extractProseFromNode(root: Element): string {
 
     if (PROSE_LEAF_TAGS.has(el.tagName)) {
       const text = (el.textContent ?? '').trim();
-      // No per-node 200-char floor — short blurbs can still surface.
       if (text) dedupePush(text);
       return;
     }
@@ -362,6 +349,11 @@ function extractProseFromNode(root: Element): string {
     }
   };
   walk(root);
+
+  // Use baselineText only as fallback when no prose leaves were found
+  if (buf.length === 0 && baselineText.length >= WHOLE_ARTICLE_CHARS) {
+    buf.push(baselineText);
+  }
 
   return buf.join('\n\n').trim();
 }
