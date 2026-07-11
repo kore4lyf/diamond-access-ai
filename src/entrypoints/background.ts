@@ -30,6 +30,31 @@ import * as logger from '../lib/logger';
 export default defineBackground(() => {
   console.log('Diamond Access AI service worker started');
 
+  // ── Defense-in-depth: catch any unhandled promise rejections in the SW
+  // so a single dropped message channel doesn't surface as a console
+  // "Uncaught" line that confuses PC-QA diagnosis (PC-X-EXTCTX).
+  // Real cause of that "Uncaught Error: Extension context invalidated"
+  // trace: once Fireworks API fails handlePageLoad → catch calls
+  // sendResponse against an already-invalidated channel → sendResponse
+  // throws synchronously → async handlePageLoad rejects → unhandled
+  // rejection → console warning. With safeSendResponse (below) the
+  // primary path no longer throws; this listener is the safety net for
+  // any future similar regression.
+  self.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason;
+    const message =
+      reason instanceof Error
+        ? reason.message
+        : typeof reason === 'string'
+        ? reason
+        : String(reason);
+    logger.warn('system', 'unhandled rejection (suppressed)', {
+      message,
+      stack: reason instanceof Error ? reason.stack?.slice(0, 400) : undefined,
+    });
+    event.preventDefault();
+  });
+
   // ── DEV-ONLY: auto-enable verbose LLM logging (PC-VLOG companion)
   // Skips the manual `await chrome.storage.local.set(...)` step in SW
   // DevTools the user was previously running by hand. Vite tree-shakes
@@ -683,13 +708,23 @@ async function handleCommand(
     // and not know the fix is to open extension settings.
     const errorMessage = e instanceof Error ? e.message : String(e);
     if (errorMessage.includes('API key not configured')) {
-      sendResponse({ text: ERRORS.API_KEY_MISSING });
+      try {
+        sendResponse({ text: ERRORS.API_KEY_MISSING });
+      } catch (sendErr) {
+        logger.warn('command', 'sendResponse threw (channel closed)', {
+          err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+        });
+      }
       sw.stop('api-key-missing');
       return;
     }
-    sendResponse({
-      text: ERRORS.AI_UNAVAILABLE,
-    });
+    try {
+      sendResponse({ text: ERRORS.AI_UNAVAILABLE });
+    } catch (sendErr) {
+      logger.warn('command', 'sendResponse threw (channel closed)', {
+        err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+      });
+    }
     sw.stop('fallback-error');
   }
 }
@@ -745,9 +780,20 @@ async function handlePageLoad(
     logger.error('page_load', 'failure', {
       err: e instanceof Error ? e.message : String(e),
     });
-    // Graceful fallback — no summary, just page title
+    // Graceful fallback — no summary, just page title.
+    // sendResponse can throw if the channel has invalidated (extension
+    // reloaded mid-round-trip, or sender tab navigated away). Wrap it
+    // so the rejection doesn't surface as Uncaught Error in DevTools
+    // (PC-X-EXTCTX). Worst case we lose the summary silently; the
+    // next page navigation fires a fresh PAGE_LOAD anyway.
     const url = (msg.url as string) ?? '';
-    sendResponse({ summary: `Page loaded: ${url}` });
+    try {
+      sendResponse({ summary: `Page loaded: ${url}` });
+    } catch (sendErr) {
+      logger.warn('page_load', 'sendResponse threw (channel closed)', {
+        err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+      });
+    }
     sw.stop('fallback');
   }
 }
@@ -798,9 +844,13 @@ async function handleVlmRequest(
     logger.error('vlm', 'failure', {
       err: e instanceof Error ? e.message : String(e),
     });
-    sendResponse({
-      description: ERRORS.AI_UNAVAILABLE,
-    });
+    try {
+      sendResponse({ description: ERRORS.AI_UNAVAILABLE });
+    } catch (sendErr) {
+      logger.warn('vlm', 'sendResponse threw (channel closed)', {
+        err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+      });
+    }
     sw.stop('fallback');
   }
 }
@@ -871,7 +921,13 @@ async function handleDescribeCrop(
     // the full exception string (it can contain Fireworks internal
     // detail). The spoken fallback in ERRORS.AI_UNAVAILABLE is the
     // single user-facing sentence we ship.
-    sendResponse({ description: ERRORS.AI_UNAVAILABLE });
+    try {
+      sendResponse({ description: ERRORS.AI_UNAVAILABLE });
+    } catch (sendErr) {
+      logger.warn('describe_crop', 'sendResponse threw (channel closed)', {
+        err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+      });
+    }
     sw.stop('fallback');
   }
 }
@@ -973,6 +1029,12 @@ async function handleFireworksTest(
       err: e instanceof Error ? e.message : String(e),
     });
     sw.stop('fail');
-    sendResponse({ ok: false, error: String(e) });
+    try {
+      sendResponse({ ok: false, error: String(e) });
+    } catch (sendErr) {
+      logger.warn('llm_response', 'sendResponse threw (channel closed)', {
+        err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+      });
+    }
   }
 }
