@@ -7,6 +7,8 @@
 
 import { defineBackground } from 'wxt/utils/define-background';
 import { callLLMWithRetry, callVLM, captureUserSpeech } from '../lib/fireworks';
+import { chunkForRead, needsModelCleanup } from '../lib/content-chunker';
+import { summarizeChunks } from '../lib/map-reduce';
 import {
   PERSONA_BLOCK,
   buildCommandPrompt,
@@ -194,6 +196,18 @@ export default defineBackground(() => {
       // ── FIREWORKS_TEST: diagnostics — Phase C, kept for options page ────
       if (msg.type === 'FIREWORKS_TEST') {
         handleFireworksTest(msg, sendResponse);
+        return true;
+      }
+
+      // ── READ_ARTICLE: long-form read-aloud (mode='aloud') or article
+      //    map-reduce summary (mode='summarize'). PC-EXT-MAINCONT (HY3
+      //    plan): read-aloud bypasses the LLM via chunkForRead +
+      //    TTS; summarize uses summarizeChunks (parallel map +
+      //    recursive reduce). LLM never narrates the full article —
+      //    it stays on the classification side, which is its actual
+      //    job.
+      if (msg.type === 'READ_ARTICLE') {
+        handleReadArticle(msg, sendResponse);
         return true;
       }
 
@@ -1036,5 +1050,144 @@ async function handleFireworksTest(
         err: sendErr instanceof Error ? sendErr.message : String(sendErr),
       });
     }
+  }
+}
+
+/**
+ * READ_ARTICLE: Long-form read-aloud OR condensed map-reduce summary.
+ *
+ * HY3 plan (PC-EXT-MAINCONT): the LLM was wrongly doing TWO jobs —
+ * intent classification AND narrating the full article. The fix
+ * separates them:
+ *   - mode='aloud': chunkForRead + speak() — LLM is bypassed entirely;
+ *     model is invoked LAZILY on chunks that need jargon cleanup.
+ *   - mode='summarize': summarizeChunks — parallel map → recursive
+ *     reduce. Bounded LLM cost, no chunk dropped.
+ *
+ * The LLM still gets to do its real job (intent classification via
+ * COMMAND_TASK in content.ts) but no longer narrates the full
+ * article. That was the original BBC "max chars filled up" bug
+ * surfacing in a new shape; this fixes it for good.
+ *
+ * Graceful-degradation contract (PC-EXT-MAINCONT correction #5):
+ * no chunk dropped. Cleanup failure for a chunk falls back to the
+ * raw text — better than silent skip. The caller (content.ts
+ * streamReadAloud) announces skips inline so the user knows.
+ */
+async function handleReadArticle(
+  msg: Record<string, unknown>,
+  sendResponse: (response?: unknown) => void,
+): Promise<void> {
+  const sw = new logger.Stopwatch('read_article', 'READ_ARTICLE round-trip');
+  try {
+    const mode = (msg.mode as 'aloud' | 'summarize') ?? 'aloud';
+    const prose = ((msg.prose as string) ?? '').trim();
+
+    if (!prose) {
+      logger.warn('read_article', 'no prose', { mode });
+      try {
+        sendResponse({ error: 'No content to read or summarize.', mode });
+      } catch (sendErr) {
+        logger.warn('read_article', 'sendResponse threw (channel closed)', {
+          err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+        });
+      }
+      sw.stop('no-prose');
+      return;
+    }
+
+    // ── mode='aloud': chunk into TTS-sized utterances; lazy cleanup ──
+    if (mode === 'aloud') {
+      const chunks = chunkForRead(prose);
+      logger.info('read_article', 'aloud: chunking done', {
+        chunkCount: chunks.length,
+      });
+
+      const cleaned: string[] = [];
+      const cleanedFlags: boolean[] = [];
+      for (const c of chunks) {
+        if (needsModelCleanup(c)) {
+          try {
+            const cleanedText = await callLLMWithRetry(
+              'You are a TTS-friendly text normalizer. Output rewritten text only — no commentary, no JSON. Keep the original meaning; expand symbols, replace jargon, decolonize numbers (e.g. 1,000 → one thousand).',
+              c,
+            );
+            cleaned.push(cleanedText);
+            cleanedFlags.push(true);
+          } catch {
+            // Graceful degradation: cleanup failed for this chunk,
+            // use raw. NEVER drop — that's the bug we're killing.
+            cleaned.push(c);
+            cleanedFlags.push(false);
+          }
+        } else {
+          cleaned.push(c);
+          cleanedFlags.push(false);
+        }
+      }
+
+      logger.info('read_article', 'aloud: ready to stream', {
+        chunks: cleaned.length,
+        cleanedCount: cleanedFlags.filter(Boolean).length,
+      });
+      try {
+        sendResponse({ chunks: cleaned, cleanedFlags, mode: 'aloud' });
+      } catch (sendErr) {
+        logger.warn('read_article', 'sendResponse threw (channel closed)', {
+          err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+        });
+      }
+      sw.stop('aloud');
+      return;
+    }
+
+    // ── mode='summarize': map-reduce via summarizeChunks ──
+    if (mode === 'summarize') {
+      logger.info('read_article', 'summarize: planning map-reduce', {
+        proseLen: prose.length,
+      });
+      const { diamond_model } = await chrome.storage.local.get('diamond_model');
+      const model = (diamond_model as string | undefined) ?? '';
+      try {
+        const summary = await summarizeChunks(
+          prose,
+          model,
+          async (systemPrompt, userMessage) => {
+            return callLLMWithRetry(systemPrompt, userMessage);
+          },
+        );
+        sendResponse({ summary, mode: 'summarize' });
+      } catch (sendErr) {
+        logger.warn('read_article', 'sendResponse threw (channel closed)', {
+          err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+        });
+      }
+      sw.stop('summarize');
+      return;
+    }
+
+    // Unknown mode — surface a clear error rather than silently
+    // dropping the request.
+    try {
+      sendResponse({ error: `Unknown mode: ${String(mode)}`, mode });
+    } catch (sendErr) {
+      logger.warn('read_article', 'sendResponse threw (channel closed)', {
+        err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+      });
+    }
+    sw.stop('bad-mode');
+  } catch (e: unknown) {
+    console.error('[background] READ_ARTICLE error:', e);
+    logger.error('read_article', 'failure', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+    try {
+      sendResponse({ error: String(e) });
+    } catch (sendErr) {
+      logger.warn('read_article', 'sendResponse threw (channel closed)', {
+        err: sendErr instanceof Error ? sendErr.message : String(sendErr),
+      });
+    }
+    sw.stop('fail');
   }
 }

@@ -58,6 +58,7 @@ export type LogCategory =
   | 'describe_crop'
   | 'llm_request'
   | 'llm_response'
+  | 'read_article'
   | 'stt'
   | 'tts'
   | 'action'

@@ -118,6 +118,8 @@ ACTION SCHEMAS (pick exactly one):
 {"action":"fill","fields":[{"elementIndex":<int>,"value":"<text>"}],"description":"<plain English>"}     ← one or more fields
 {"action":"describe_image","elementIndex":<int>,"description":"<plain English>"}     ← describe a specific image the user named
 {"action":"list_images","description":"<plain English>"}     ← list every image on the page, user picks next
+{"action":"read_article","description":"<plain English, ≤6 words>"}     ← voice-read the main content of this page (extractMainContent + chunkForRead + TTS stream; no model in the loop, user can stop with Alt+D)
+{"action":"summarize_article","description":"<plain English, ≤6 words>"}     ← map-reduce summary of the main content (extractMainContent + chunkForSummarize + parallel map + recursive combine)
 {"action":"confirm","speech":"<confirmation request>","pendingAction":{...}}     ← irreversible actions
 
 ELEMENT-INDEX RULES:
