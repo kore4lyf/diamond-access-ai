@@ -196,22 +196,9 @@ export function speak(text: string): Promise<void> {
     utterance.onend = () => resolve();
     utterance.onerror = () => resolve(); // Don't block on TTS errors
 
-    // Chrome loads voices asynchronously — if none yet, listen for the event
-    if (voices.length === 0) {
-      speechSynthesis.onvoiceschanged = () => {
-        const updatedVoices = speechSynthesis.getVoices();
-        const better =
-          updatedVoices.find(
-            (v) => v.lang === 'en-US' && v.localService,
-          ) ??
-          updatedVoices.find((v) => v.lang === 'en-US') ??
-          updatedVoices[0] ??
-          null;
-        if (better) utterance.voice = better;
-        speechSynthesis.onvoiceschanged = null;
-      };
-    }
-
+    // Chrome loads voices asynchronously; if none yet, speak() still works
+    // with the system default voice. Do NOT set utterance.voice after speaking
+    // as that can re-trigger Chrome's queue on some pages (BBC re-read bug).
     speechSynthesis.speak(utterance);
   });
 }
