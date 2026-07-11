@@ -42,7 +42,9 @@ export type DiamondAction =
   | { action: 'forward'; description: string }
   | { action: 'refresh'; description: string }
   | { action: 'describe_image'; elementIndex: number; description: string }
-  | { action: 'list_images'; description: string };
+  | { action: 'list_images'; description: string }
+  | { action: 'read_article'; description: string }
+  | { action: 'summarize_article'; description: string };
 
 // ---------------------------------------------------------------------------
 // Module state (confirmation flow)

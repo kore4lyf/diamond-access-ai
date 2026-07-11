@@ -21,6 +21,7 @@ import {
 } from '../lib/voice';
 import { normalizeMode, type DiamondMode } from '../lib/storage';
 import { buildPageSnapshot, isSparseDOM } from '../lib/page-snapshot';
+import { extractMainContent } from '../lib/main-content';
 import {
   executeAction,
   checkConfirmation,
@@ -37,6 +38,15 @@ import * as logger from '../lib/logger';
 
 /** True while a COMMAND round-trip is in flight — prevents overlapping. */
 let isProcessing = false;
+
+/**
+ * HY3 plan / PC-STREAM: True while a read-aloud stream is in flight.
+ * A second Alt+D mid-read triggers the stop-toggle in activateDiamond
+ * (cancels TTS + speaks "Stopped reading."). Separate flag from
+ * isProcessing because the streaming path runs without the COMMAND
+ * round-trip being live (chunks speak sequentially after the SW resolves).
+ */
+let isReadingAloud = false;
 
 // ---------------------------------------------------------------------------
 // Activation-route state
@@ -363,6 +373,20 @@ export default defineContentScript({
  * `document.visibilityState === 'visible'`.
  */
 async function activateDiamond(): Promise<void> {
+  // HY3 plan / PC-STREAM: read-aloud mid-stream stop toggle.
+  // Re-pressing Alt+D while a read-aloud stream is in flight cancels
+  // the current TTS utterance + aborts the chunk queue. This is the
+  // user-visible half of "Press Alt+D to stop" spoken at stream start.
+  if (isReadingAloud) {
+    isReadingAloud = false;
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+    logger.info('action', 'read_article_aloud_stopped_via_alt_d');
+    await speak('Stopped reading.');
+    return;
+  }
+
   // Guard: not already listening/processing AND no live hands-free loop.
   // The hands-free guard means a double-press on Alt+D while in the loop
   // is a no-op (the loop is already hot) — only MODE_CHANGED can stop it.
@@ -733,6 +757,20 @@ async function handleResponse(
     hasPending: 'pendingAction' in action,
   });
 
+  // HY3 plan / PC-STREAM: read_article / summarize_article own their
+  // own pipeline (extractMainContent → SW READ_ARTICLE → speak
+  // chunks / speak summary). They bypass executeAction because the
+  // handler doesn't fit the click/fill/navigate model — no
+  // elementIndex, no safety-net wrap.
+  if (action.action === 'read_article' || action.action === 'summarize_article') {
+    if (action.action === 'read_article') {
+      await readArticleAloud(action.description as string);
+    } else {
+      await summarizeArticle(action.description as string);
+    }
+    return;
+  }
+
   // ── Phase H: Safety net — check for irreversible actions ──────────────
   // Phase J (PC-QS-1): also pass the resolved DOM element so safety-net
   // can run form-context exemption (search/filter/login submits skip
@@ -804,6 +842,15 @@ function isValidAction(obj: Record<string, unknown>): boolean {
     case 'list_images':
       return typeof obj.description === 'string';
 
+    // HY3 plan / PC-STREAM: read-aloud + summarize-article own their
+    // own pipeline (extractMainContent → SW READ_ARTICLE → speak
+    // chunks / speak summary). Without this gate, handleResponse
+    // falls through to the !action branch and speaks the raw JSON —
+    // exactly the "action column read underscore article" trace.
+    case 'read_article':
+    case 'summarize_article':
+      return typeof obj.description === 'string';
+
     case 'confirm':
       return (
         typeof obj.speech === 'string' &&
@@ -861,4 +908,139 @@ function getElementText(
   }
 
   return '';
+}
+
+// ---------------------------------------------------------------------------
+// HY3 plan / PC-STREAM — read-aloud + summarize-article streaming
+//
+// These own their own pipeline: extractMainContent (local DOM-walk)
+// → SW READ_ARTICLE message → speak chunks or speak summary. They
+// bypass executeAction because the handler doesn't fit the
+// click/fill/navigate model — no elementIndex, no safety-net wrap.
+// ---------------------------------------------------------------------------
+
+/**
+ * HY3 plan / PC-STREAM: read-aloud pipeline.
+ *
+ *   1. extractMainContent (readability-scored, dev-gated dry-run
+ *      validated) — the REAL page prose, no LLM narration.
+ *   2. chrome.runtime.sendMessage READ_ARTICLE mode='aloud' → SW does
+ *      chunkForRead + lazy jargon cleanup per chunk (needsModelCleanup).
+ *   3. Stream the chunks back through speak() sequentially, checking
+ *      isReadingAloud between every chunk so Alt+D mid-stream toggles
+ *      stop (cancels TTS, speaks "Stopped reading.").
+ *   4. After stream ends, announce how many chunks fell back to raw
+ *      text (cleanup failed) — graceful-degradation contract from
+ *      PC-EXT-MAINCONT correction #5.
+ *
+ * Empty prose → speak the apology, no SW round-trip.
+ */
+async function readArticleAloud(description: string): Promise<void> {
+  logger.info('action', 'read_article_aloud: extract starting', { description });
+
+  const result = extractMainContent();
+  if (!result.prose.trim()) {
+    await speak("Sorry, I couldn't extract any readable content from this page.");
+    return;
+  }
+
+  let response:
+    | { chunks?: string[]; cleanedFlags?: boolean[]; error?: string }
+    | undefined;
+  try {
+    response = (await chrome.runtime.sendMessage({
+      type: 'READ_ARTICLE',
+      mode: 'aloud',
+      prose: result.prose,
+      url: window.location.href,
+    })) as typeof response;
+  } catch (e) {
+    logger.warn('action', 'READ_ARTICLE sendMessage failed', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+    await speak("Sorry, I couldn't reach the read-aloud service.");
+    return;
+  }
+
+  if (response?.error || !response?.chunks) {
+    await speak(`Sorry — ${response?.error ?? 'no chunks returned'}.`);
+    return;
+  }
+
+  logger.info('action', 'read_article_aloud: chunking ready', {
+    chunkCount: response.chunks.length,
+  });
+
+  isReadingAloud = true;
+  await speak('Reading this article. Press Alt+D to stop.');
+
+  let stoppedAt = -1;
+  for (let i = 0; i < response.chunks.length; i++) {
+    if (!isReadingAloud) {
+      stoppedAt = i;
+      break;
+    }
+    await speak(response.chunks[i]);
+  }
+  isReadingAloud = false;
+
+  if (stoppedAt >= 0) {
+    logger.info('action', 'read_article_aloud: user-stopped via Alt+D', {
+      atChunk: stoppedAt,
+      totalChunks: response.chunks.length,
+    });
+    return;
+  }
+
+  // Graceful-degradation announce (only if cleanup failed on any chunk).
+  const rawCount = response.cleanedFlags?.filter((c) => !c).length ?? 0;
+  if (rawCount > 0) {
+    await speak(
+      `Finished. I had to keep ${rawCount} part${rawCount === 1 ? '' : 's'} raw because cleanup failed.`,
+    );
+  }
+}
+
+/**
+ * HY3 plan / PC-STREAM: summarize-article pipeline.
+ *
+ * Same extraction as read-aloud, but mode='summarize' routes through
+ * SW's map-reduce (parallel summarize + recursive combine). One
+ * condensed line is returned and spoken. Empty prose → apology, no
+ * SW round-trip.
+ */
+async function summarizeArticle(description: string): Promise<void> {
+  logger.info('action', 'summarize_article: extract starting', { description });
+
+  const result = extractMainContent();
+  if (!result.prose.trim()) {
+    await speak("Sorry, I couldn't extract any readable content from this page.");
+    return;
+  }
+
+  let response: { summary?: string; error?: string } | undefined;
+  try {
+    response = (await chrome.runtime.sendMessage({
+      type: 'READ_ARTICLE',
+      mode: 'summarize',
+      prose: result.prose,
+      url: window.location.href,
+    })) as typeof response;
+  } catch (e) {
+    logger.warn('action', 'READ_ARTICLE sendMessage failed', {
+      err: e instanceof Error ? e.message : String(e),
+    });
+    await speak("Sorry, I couldn't reach the summarize service.");
+    return;
+  }
+
+  if (response?.error || !response?.summary) {
+    await speak(`Sorry — ${response?.error ?? 'no summary returned'}.`);
+    return;
+  }
+
+  await speak(response.summary);
+  logger.info('action', 'summarize_article: spoke summary', {
+    length: response.summary.length,
+  });
 }
