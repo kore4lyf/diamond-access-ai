@@ -22,6 +22,7 @@ import {
 import { normalizeMode, type DiamondMode } from '../lib/storage';
 import { buildPageSnapshot, isSparseDOM } from '../lib/page-snapshot';
 import { extractMainContent } from '../lib/main-content';
+import { detectLocale } from '../lib/content-chunker';
 import {
   executeAction,
   checkConfirmation,
@@ -965,6 +966,7 @@ async function readArticleAloud(description: string): Promise<void> {
       mode: 'aloud',
       prose: result.prose,
       url: window.location.href,
+      lang: detectLocale(document),
     })) as typeof response;
   } catch (e) {
     logger.warn('action', 'READ_ARTICLE sendMessage failed', {
@@ -1037,6 +1039,7 @@ async function summarizeArticle(description: string): Promise<void> {
       mode: 'summarize',
       prose: result.prose,
       url: window.location.href,
+      lang: detectLocale(document),
     })) as typeof response;
   } catch (e) {
     logger.warn('action', 'READ_ARTICLE sendMessage failed', {

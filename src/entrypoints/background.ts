@@ -1098,7 +1098,7 @@ async function handleReadArticle(
 
     // ── mode='aloud': chunk into TTS-sized utterances; lazy cleanup ──
     if (mode === 'aloud') {
-      const chunks = chunkForRead(prose);
+      const chunks = chunkForRead(prose, { locale: msg.lang as string | undefined });
       logger.info('read_article', 'aloud: chunking done', {
         chunkCount: chunks.length,
       });

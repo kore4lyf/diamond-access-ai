@@ -67,23 +67,33 @@ export function modelBudget(model: string | undefined | null): number {
  * the gold-standard reference (ReadAloud_ChromeExtension) chunking
  * behavior the PC-EXT-MAINCONT research cited.
  */
+export function detectLocale(doc?: Document | null): string {
+  const langAttr = doc?.documentElement?.getAttribute('lang') ?? '';
+  const primary = langAttr.split('-')[0]?.toLowerCase() ?? '';
+  return primary || 'en';
+}
+
 export function chunkForRead(
   prose: string,
-  opts: { targetChars?: number; locale?: string } = {},
+  opts: { targetChars?: number; locale?: string; doc?: Document | null } = {},
 ): string[] {
   const targetChars = opts.targetChars ?? 280;
-  const locale = opts.locale ?? 'en';
+  const locale = opts.locale ?? detectLocale(opts.doc ?? null);
 
   if (!prose.trim()) return [];
 
   const Seg = (globalThis as { Intl?: typeof Intl }).Intl?.Segmenter;
   let sentences: string[];
   if (Seg) {
-    const segmenter = new Seg(locale, { granularity: 'sentence' });
-    sentences = [];
-    for (const seg of segmenter.segment(prose)) {
-      const s = seg.segment.trim();
-      if (s) sentences.push(s);
+    try {
+      const segmenter = new Seg(locale, { granularity: 'sentence' });
+      sentences = [];
+      for (const seg of segmenter.segment(prose)) {
+        const s = seg.segment.trim();
+        if (s) sentences.push(s);
+      }
+    } catch {
+      sentences = chunkByRegex(prose);
     }
   } else {
     sentences = chunkByRegex(prose);

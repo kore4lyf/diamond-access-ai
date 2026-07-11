@@ -141,6 +141,7 @@ function getAncestorAnchorWeight(el: Element, root: Element, depthLimit = 5): nu
  */
 const PROSE_LEAF_TAGS = new Set([
   'P', 'LI', 'PRE', 'BLOCKQUOTE', 'FIGCAPTION',
+  'TD', 'TH',
   'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
 ]);
 
@@ -344,6 +345,14 @@ function extractProseFromNode(root: Element): string {
       if (text) dedupePush(text);
       return;
     }
+
+    // Loose-div text emission (Path B change 2)
+    if (el.tagName === 'DIV' && el.children.length === 0) {
+      const text = (el.textContent ?? '').trim();
+      if (text.length > 30) dedupePush(text);
+      return;
+    }
+
     for (const child of Array.from(el.children)) {
       walk(child as Element);
     }
