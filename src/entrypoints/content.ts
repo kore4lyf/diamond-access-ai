@@ -20,6 +20,7 @@ import {
   startHandsFree,
   stopHandsFree,
   isHandsFreeActive,
+  isHandsFreeRecognitionLive,
 } from '../lib/voice';
 import { normalizeMode, type DiamondMode } from '../lib/storage';
 import { buildPageSnapshot, isSparseDOM } from '../lib/page-snapshot';
@@ -244,15 +245,23 @@ export default defineContentScript({
           });
           return;
         }
-        // Persona says "before any action, name the action in plain
-        // English" — speaking the new mode name reinforces the change
-        // regardless of source (popup toggle, Alt+S, or voice switch).
-        // ERRORS.MODE_*_ON strings are already brief ("Hands-free mode.").
-        speak(
-          next === 'hands_free'
-            ? ERRORS.MODE_HANDS_FREE_ON
-            : ERRORS.MODE_COMMAND_ON,
-        );
+        // Hands-free: start the listening loop immediately. startHandsFree
+        // plays the awake beep as the cue, so we don't also speak the
+        // mode name (avoids duplicate audio). This is the start path the
+        // activateDiamond docstring already promised but was never wired
+        // up — switching to hands-free now begins continuous listening
+        // without requiring a separate Alt+D press. Stays after the
+        // visibilityState !== 'visible' early-return above so background
+        // tabs never spawn a recognizer.
+        if (next === 'hands_free') {
+          activateHandsFreeMode();
+          return;
+        }
+        // Command-mode transition (incl. coming back from hands-free):
+        // speak the change so the user knows Diamond is now push-to-talk
+        // (Persona rule — name the action in plain English). The
+        // hands-free branch above returns before reaching this line.
+        speak(ERRORS.MODE_COMMAND_ON);
       }
     });
 
@@ -431,10 +440,14 @@ async function activateDiamond(): Promise<void> {
     return;
   }
 
-  // Guard: not already listening/processing AND no live hands-free loop.
-  // The hands-free guard means a double-press on Alt+D while in the loop
-  // is a no-op (the loop is already hot) — only MODE_CHANGED can stop it.
-  if (isListening() || isProcessing || isHandsFreeActive()) return;
+  // Guard: not already listening/processing. A *live* hands-free loop is
+  // a no-op (only MODE_CHANGED can stop it). If hands-free is flagged
+  // active but no recognizer is actually live (a loop that died silently),
+  // Alt+D re-arms it — startHandsFree (Fix 2) clears the orphaned session
+  // and starts a fresh loop, so the user can always recover by pressing
+  // Alt+D even after a silent death.
+  if (isListening() || isProcessing) return;
+  if (isHandsFreeRecognitionLive()) return;
 
   activateDiamondFresh();
 }

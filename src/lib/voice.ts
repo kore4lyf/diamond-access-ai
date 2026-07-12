@@ -379,10 +379,18 @@ export function startHandsFree(
     transcript: string,
   ) => boolean | void | Promise<boolean | void>,
 ): void {
-  // Guard: don't double-arm hands-free.
-  if (handsFreeActive) {
+  // Guard: don't double-arm a genuinely live hands-free loop. A loop
+  // that died silently leaves `handsFreeActive` true but
+  // `activeRecognition` null — clear that orphaned session and re-arm so
+  // MODE_CHANGED and Alt+D can reliably (re)start listening even after a
+  // silent death.
+  if (handsFreeActive && activeRecognition) {
     logger.warn('voice', 'startHandsFree called while already active');
     return;
+  }
+  if (handsFreeActive && !activeRecognition) {
+    logger.info('voice', 'startHandsFree recovering orphaned session');
+    clearHandsFreeSession('recover-orphan');
   }
 
   const win =
@@ -578,6 +586,11 @@ export function stopHandsFree(): void {
   // Sleep beep, but only if we WERE actually listening.
   playBeep('sleep');
   listeningFlag = false;
+}
+
+/** True iff a hands-free session is currently armed AND a recognizer is live. */
+export function isHandsFreeRecognitionLive(): boolean {
+  return handsFreeActive && activeRecognition !== null;
 }
 
 /** True iff a hands-free session is currently armed. */
