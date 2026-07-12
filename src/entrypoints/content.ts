@@ -381,6 +381,33 @@ export default defineContentScript({
       },
       true, // capture phase
     );
+
+    // Phase J: auto-arm hands-free on page load. If the user has hands-free
+    // persisted, begin continuous listening immediately — no Alt+D needed.
+    // Only the active (visible) tab arms (matches the "main tab is focus"
+    // principle and avoids background-tab recognizers). Live toggles are
+    // covered by the MODE_CHANGED handler above; this covers fresh loads
+    // and navigations into a new page while already in hands-free mode.
+    if (
+      document.visibilityState === 'visible' &&
+      typeof chrome !== 'undefined' &&
+      chrome.storage?.local
+    ) {
+      chrome.storage.local
+        .get(['diamond_mode'])
+        .then((res) => {
+          if (
+            normalizeMode(
+              (res as { diamond_mode?: unknown }).diamond_mode,
+            ) === 'hands_free' &&
+            !isHandsFreeActive()
+          ) {
+            logger.info('voice', 'auto-arming hands-free on page load');
+            activateHandsFreeMode();
+          }
+        })
+        .catch(() => undefined);
+    }
   },
 });
 

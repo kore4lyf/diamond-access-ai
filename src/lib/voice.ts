@@ -412,6 +412,11 @@ export function startHandsFree(
 
   handsFreeActive = true;
   handsFreeRestartCount = 0;
+  // True while an utterance is being processed (STT result → LLM → TTS).
+  // While set we must NOT re-arm a new recognizer, otherwise a single
+  // command loops; and the recognizer's own `onend` (fired by our
+  // stop() below) must not double-start a second recognizer.
+  let handsFreeProcessing = false;
   // Start a fresh session stopwatch. PC-HF-1 verifies the timer runs from
   // here through the entire loop; PC-HF-2 verifies the stop reason path.
   // If a previous stopwatch is somehow still alive (recovery from a
@@ -427,7 +432,7 @@ export function startHandsFree(
   logger.info('voice', 'hands-free started');
 
   const armOnce = (): void => {
-    if (!handsFreeActive) return;
+    if (!handsFreeActive || handsFreeProcessing) return;
 
     let recognition: SpeechRecognition;
     try {
@@ -451,35 +456,55 @@ export function startHandsFree(
       recognition.processLocally = false;
     }
 
+    // Index of the last final result already handed to the utterance
+    // callback. continuous + interimResults means `event.results` keeps
+    // every prior result, so without this guard each later `onresult`
+    // (driven by ongoing mic input) re-fires the same final — the
+    // "command repeats itself" bug.
+    let lastFinalIndex = -1;
+
     recognition.onstart = () => {
       logger.debug('stt', 'hands-free session start');
     };
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
+      if (handsFreeProcessing) return; // already handling a final
       handsFreeRestartCount = 0;
       resetSleepTimer();
 
-      // Pick the LAST `isFinal` entry — interim transcripts don't matter.
+      // Only act on a NEW final result past what we've processed.
+      let finalIndex = -1;
       let finalTranscript = '';
-      for (let i = event.results.length - 1; i >= 0; i--) {
+      for (let i = event.results.length - 1; i > lastFinalIndex; i--) {
         const result = event.results[i];
         if (result && result.isFinal) {
+          finalIndex = i;
           finalTranscript = result[0]?.transcript ?? '';
           break;
         }
       }
-
-      if (!finalTranscript) return; // interim only — keep listening.
+      if (finalIndex === -1) return; // interim only or already processed
+      lastFinalIndex = finalIndex;
 
       logger.info('stt', 'hands-free transcript', {
         text: finalTranscript,
       });
 
-      // Wrap in a Promise chain so sync and async callbacks converge on
-      // the same handling. Sync throws become rejections here too.
+      // Stop the recognizer now: (1) the final persists in event.results,
+      // so leaving it open re-fires it on the next `onresult`; (2)
+      // Diamond's spoken reply must not be captured by the still-open mic.
+      // Processing owns the re-arm below.
+      handsFreeProcessing = true;
+      try {
+        recognition.stop();
+      } catch {
+        // already stopping
+      }
+
       Promise.resolve()
         .then(() => onUtterance(finalTranscript))
         .then((keepGoing) => {
+          handsFreeProcessing = false;
           if (keepGoing === false) {
             logger.info('voice', 'utterance callback requested stop');
             handsFreeActive = false;
@@ -488,15 +513,19 @@ export function startHandsFree(
             } catch {
               // already stopped
             }
+            return;
           }
+          // Re-arm only after the utterance is fully handled.
+          if (handsFreeActive) armOnce();
         })
         .catch((err) => {
+          handsFreeProcessing = false;
           logger.error('voice', 'utterance callback threw', {
             err: err instanceof Error ? err.message : String(err),
             transcript: finalTranscript,
           });
-          // Sync throw from a buggy callback never breaks the loop —
-          // we just continue to the next utterance.
+          // Sync throw from a buggy callback never breaks the loop.
+          if (handsFreeActive) armOnce();
         });
     };
 
@@ -535,15 +564,25 @@ export function startHandsFree(
 
     recognition.onend = () => {
       listeningFlag = false;
+      // Stale `onend` from a recognizer we already replaced/stopped while
+      // processing — ignore it so we don't tear down the live recognizer.
+      if (recognition !== activeRecognition) return;
       activeRecognition = null;
-      logger.debug('stt', 'hands-free session end', { handsFreeActive });
+      logger.debug('stt', 'hands-free session end', {
+        handsFreeActive,
+        handsFreeProcessing,
+      });
       if (!handsFreeActive) {
         logger.info('voice', 'hands-free stopped cleanly');
         return;
       }
+      // While an utterance is being processed we stopped the recognizer
+      // ourselves; its `onend` must NOT also re-arm or we'd run two
+      // recognizers. The processing chain re-arms after it finishes.
+      if (handsFreeProcessing) return;
       // Auto-restart with short delay so rapid error cycles don't hammer.
       window.setTimeout(() => {
-        if (handsFreeActive) armOnce();
+        if (handsFreeActive && !handsFreeProcessing) armOnce();
       }, 120);
     };
 
