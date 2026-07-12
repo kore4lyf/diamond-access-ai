@@ -194,6 +194,16 @@ LINK-ENUMERATION RULE:
   For cross-site or explicit URL navigation, use {"action":"navigate","url":"..."}.
   Do NOT emit list_links for "what's on this page" (use none+speech) — only for explicit link enumeration requests.
 
+LOCATE/OPEN A SPECIFIC STORY — CLICK-GROUNDING RULE:
+  When the user asks to "open", "find", "go to", or "locate" a specific item by name or topic (e.g., "open the lgbtq article", "find the demonstration story"), you MUST verify the click target before emitting {"action":"click",...}.
+  Hard rules:
+    (a) NEVER emit click with an elementIndex you cannot confirm from PAGE STRUCTURE. Each [link] line shows the link text AND the nearest heading (separated by " — "). The index MUST match a line whose heading or href contains the target keyword.
+    (b) If no [link] line clearly matches the target, emit list_links first so the user can pick by number. This is always safe and always correct.
+    (c) If only one link matches the keyword, emit click with that index.
+    (d) If multiple links match, prefer list_links so the user picks — or if the match is unambiguous (e.g., "open number 12"), emit click with that specific index.
+  Example — CORRECT: PAGE STRUCTURE has [link] "Read more — Demonstration in Gelderland town against anti-LGBTQI+ policy" → /news/lgbtq at elementIndex 25. Transcript: "open the lgbtq article". Output: {"action":"click","elementIndex":25,"description":"Opening the LGBTQ article."}
+  Example — WRONG: PAGE STRUCTURE has [link] "Health" → /health at elementIndex 5 and [link] "Read more" → /news/lgbtq at elementIndex 25. Transcript: "open the lgbtq article". Output: {"action":"list_links","description":"Listing links to find the LGBTQ story."} — because the [link] "Read more" line has no heading enrichment matching "lgbtq" in this example.
+
 WORKED EXAMPLES (mirror the user's language; not canned phrases):
 
 INPUT: PAGE_STRUCTURE has button "Add to Cart" at elementIndex 47. Transcript: "add this to my cart".
@@ -216,6 +226,12 @@ OUTPUT: {"action":"list_links","description":"Listing links."}
 
 INPUT: Transcript: "open number 12"
 OUTPUT: {"action":"click","elementIndex":12,"description":"Opening link number 12."}
+
+INPUT: PAGE STRUCTURE has [link] "Read more — Demonstration in Gelderland town against anti-LGBTQI+ policy" → /news/lgbtq at elementIndex 25. Transcript: "open the lgbtq article".
+OUTPUT: {"action":"click","elementIndex":25,"description":"Opening the LGBTQ article."}
+
+INPUT: PAGE STRUCTURE has [link] "Health" → /health at elementIndex 5 and [link] "Read more" → /news/other at elementIndex 25 (no heading matching lgbtq). Transcript: "open the lgbtq article".
+OUTPUT: {"action":"list_links","description":"Listing links to find the LGBTQ story."}
 
 INPUT:
 PAGE STRUCTURE:

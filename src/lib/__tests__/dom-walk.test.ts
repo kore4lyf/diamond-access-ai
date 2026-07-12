@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { extractPageStructureFromRoot } from '../dom-walk';
+import { extractPageStructureFromRoot, nearestHeadingText, enumerateLinks, speakLinkList, enumerateImages, speakImageList, MAX_IMAGES } from '../dom-walk';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -453,8 +453,6 @@ describe('implicit role mapping', () => {
 // Image enumeration (Phase J + Image-describe feature)
 // ---------------------------------------------------------------------------
 
-import { enumerateImages, speakImageList, MAX_IMAGES, enumerateLinks, speakLinkList } from '../dom-walk';
-
 describe('enumerateImages', () => {
   function makeImg(src: string, alt: string, w = 200, h = 100): HTMLElement {
     const img = document.createElement('img');
@@ -650,8 +648,8 @@ describe('enumerateLinks', () => {
 // ---------------------------------------------------------------------------
 
 describe('speakLinkList', () => {
-  function makeLinkEntry(text: string, index: number, href: string): { index: number; text: string; href: string } {
-    return { index, text, href };
+  function makeLinkEntry(text: string, index: number, href: string): { index: number; text: string; heading: string; href: string } {
+    return { index, text, heading: '', href };
   }
 
   it('returns "no links" line for empty input', () => {
@@ -678,5 +676,109 @@ describe('speakLinkList', () => {
     const out = speakLinkList([makeLinkEntry(longText, 1, '/long')]);
     expect(out.length).toBeLessThan(longText.length + 50);
     expect(out).toMatch(/Number 1/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// nearestHeadingText — enriches link lines with preceding headlines
+// ---------------------------------------------------------------------------
+
+describe('nearestHeadingText', () => {
+  function makeSnapshot(elements: HTMLElement[]): { elements: HTMLElement[] } {
+    return { elements };
+  }
+
+  it('finds preceding h2 for a link inside an article', () => {
+    const root = fixture(`
+      <article>
+        <h2>Demonstration in Gelderland town against anti-LGBTQI+ policy</h2>
+        <p>Some text</p>
+        <a href="/news/lgbtq">Read more</a>
+      </article>
+    `);
+    const link = root.querySelector('a')!;
+    const heading = nearestHeadingText(link);
+    expect(heading).toContain('Demonstration in Gelderland');
+  });
+
+  it('returns empty string when no heading exists', () => {
+    const root = fixture(`
+      <div>
+        <p>Just a paragraph</p>
+        <a href="/nowhere">Click me</a>
+      </div>
+    `);
+    const link = root.querySelector('a')!;
+    expect(nearestHeadingText(link)).toBe('');
+  });
+
+  it('finds heading in a sibling article above', () => {
+    const root = fixture(`
+      <article>
+        <h2>Health news roundup</h2>
+        <a href="/health">Read more health</a>
+      </article>
+      <article>
+        <h2>LGBTQ rights march</h2>
+        <a href="/lgbtq">Read more</a>
+      </article>
+    `);
+    const links = root.querySelectorAll('a');
+    expect(nearestHeadingText(links[0])).toContain('Health news');
+    expect(nearestHeadingText(links[1])).toContain('LGBTQ rights');
+  });
+
+  it('truncates headings longer than 100 chars', () => {
+    const longH = 'A'.repeat(120);
+    const root = fixture(`
+      <h2>${longH}</h2>
+      <a href="/x">link</a>
+    `);
+    const heading = nearestHeadingText(root.querySelector('a')!);
+    expect(heading.length).toBeLessThanOrEqual(110); // 100 + '...'
+    expect(heading).toContain('...');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Heading-enriched link text in extractPageStructureFromRoot
+// ---------------------------------------------------------------------------
+
+describe('heading-enriched link text', () => {
+  it('appends heading to link text in structure output', () => {
+    const root = fixture(`
+      <article>
+        <h2>Climate summit in Amsterdam</h2>
+        <a href="/climate">Read more</a>
+      </article>
+    `);
+    const result = extractPageStructureFromRoot(root);
+    expect(result).toContain('Read more — Climate summit in Amsterdam');
+  });
+
+  it('does not duplicate heading when link text already contains it', () => {
+    const root = fixture(`
+      <article>
+        <h2>LGBTQ rights</h2>
+        <a href="/lgbtq">LGBTQ rights — full story</a>
+      </article>
+    `);
+    const result = extractPageStructureFromRoot(root);
+    // Should not have "LGBTQ rights — LGBTQ rights — full story"
+    expect(result).not.toMatch(/LGBTQ rights — LGBTQ rights/);
+  });
+
+  it('enriches link text in enumerateLinks output', () => {
+    const root = fixture(`
+      <article>
+        <h2>Climate summit in Amsterdam</h2>
+        <a href="/climate">Read more</a>
+      </article>
+    `);
+    const a = root.querySelector('a')!;
+    const entries = enumerateLinks({ elements: [a] });
+    expect(entries.length).toBe(1);
+    expect(entries[0].text).toContain('Climate summit');
+    expect(entries[0].heading).toContain('Climate summit');
   });
 });

@@ -20,7 +20,7 @@
 
 import { ERRORS } from './errors';
 import type { PageSnapshot } from './page-snapshot';
-import { enumerateImages, speakImageList, enumerateLinks, speakLinkList } from './dom-walk';
+import { enumerateImages, speakImageList, enumerateLinks, speakLinkList, nearestHeadingText } from './dom-walk';
 import * as logger from './logger';
 
 // ---------------------------------------------------------------------------
@@ -191,6 +191,70 @@ export function hasPendingConfirm(): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Click verification helpers (prevents wrong-page clicks)
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract intent keywords from an action description.
+ * Filters out short/stop words, keeps alphanumeric tokens > 3 chars.
+ * "Opening the LGBTQ article" → ["lgbtq", "article"]
+ */
+function extractIntentKeywords(description: string): string[] {
+  const STOP = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to',
+    'for', 'of', 'with', 'by', 'from', 'this', 'that', 'click',
+    'opening', 'clicking', 'tapping', 'pressing', 'link', 'button',
+    'element', 'page', 'item', 'number', 'here', 'there',
+  ]);
+  const words = description
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !STOP.has(w));
+  return [...new Set(words)];
+}
+
+/**
+ * Check whether an element's visible text, aria-label, heading, or href
+ * contains all the intent keywords. Used to verify the click target
+ * before navigating.
+ */
+function elementMatchesKeywords(
+  el: HTMLElement,
+  keywords: string[],
+): boolean {
+  if (keywords.length === 0) return true; // no keywords = nothing to verify
+  const heading = nearestHeadingText(el).toLowerCase();
+  const hay = [
+    el.textContent?.toLowerCase() ?? '',
+    el.getAttribute('aria-label')?.toLowerCase() ?? '',
+    el.getAttribute('href')?.toLowerCase() ?? '',
+    el.getAttribute('title')?.toLowerCase() ?? '',
+    heading,
+  ].join(' ');
+  return keywords.every((kw) => hay.includes(kw));
+}
+
+/**
+ * Re-match intent keywords against the snapshot's elements.
+ * Returns the first element whose text/aria/heading/href matches all keywords.
+ * Used as a second-chance fallback when the LLM's index doesn't match.
+ */
+function resolveElementByKeywords(
+  keywords: string[],
+  snapshot: PageSnapshot,
+): HTMLElement | null {
+  if (keywords.length === 0) return null;
+  for (const el of snapshot.elements) {
+    if (!el) continue;
+    if (elementMatchesKeywords(el as HTMLElement, keywords)) {
+      return el as HTMLElement;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // clickAction
 // ---------------------------------------------------------------------------
 
@@ -231,6 +295,32 @@ export function clickAction(
       description,
     });
     return ERRORS.ELEMENT_NOT_FOUND;
+  }
+
+  // Pre-click verification: check the resolved element's text/heading/href
+  // matches the intent keywords from the description. If not, re-match
+  // across the snapshot using keywords (not the full sentence). If still
+  // no match, do NOT navigate — ask the user to list links instead.
+  // This prevents the "opened the wrong page" failure where the LLM
+  // guesses an index whose link text doesn't contain the target keyword.
+  const keywords = extractIntentKeywords(description);
+  if (keywords.length > 0 && !elementMatchesKeywords(el as HTMLElement, keywords)) {
+    const reMatch = resolveElementByKeywords(keywords, snapshot);
+    if (reMatch) {
+      logger.info('action', 'click: re-matched by keywords', {
+        requestedIndex: elementIndex,
+        keywords,
+        tag: reMatch.tagName,
+      });
+      el = reMatch;
+    } else {
+      logger.warn('action', 'click: keyword verification failed, no re-match', {
+        elementIndex,
+        keywords,
+        description,
+      });
+      return "I couldn't find a link matching that. Say 'list the links' to hear them numbered.";
+    }
   }
 
   logger.info('action', 'click', {

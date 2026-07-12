@@ -316,6 +316,40 @@ function getStates(el: Element): string {
   return parts.join(' ');
 }
 
+/**
+ * Find the nearest preceding heading (<h1>–<h6>) for an element.
+ * Walks backwards through siblings, then up to parent and backwards again,
+ * up to 50 ancestors. Returns the heading text trimmed, or '' if none found.
+ * Used to enrich link text so "Read more" becomes identifiable:
+ *   [link] "Read more — Demonstration in Gelderland town against anti-LGBTQI+ policy"
+ */
+export function nearestHeadingText(el: Element): string {
+  const HEADING_TAGS = new Set(['H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+  let current: Element | null = el;
+  for (let depth = 0; depth < 20 && current; depth++) {
+    // Walk backwards through preceding siblings
+    let sib = current.previousElementSibling;
+    while (sib) {
+      if (HEADING_TAGS.has(sib.tagName)) {
+        const text = sib.textContent?.trim();
+        if (text) return text.length > 100 ? text.slice(0, 100) + '...' : text;
+      }
+      // Check inside container siblings for nested headings (article > h2)
+      // but skip leaf elements to avoid expensive querySelector on flat nodes
+      if (sib.children.length > 0) {
+        const inner = sib.querySelector('h1, h2, h3, h4, h5, h6');
+        if (inner) {
+          const text = inner.textContent?.trim();
+          if (text) return text.length > 100 ? text.slice(0, 100) + '...' : text;
+        }
+      }
+      sib = sib.previousElementSibling;
+    }
+    current = current.parentElement;
+  }
+  return '';
+}
+
 /** Get the navigation target for links and forms. */
 function getTarget(el: Element): string {
   const tag = el.tagName;
@@ -344,10 +378,19 @@ function formatElement(
   depth: number,
   roleDisplay: string,
 ): LineEntry | null {
-  const name = getAccessibleName(el, roleDisplay);
+  let name = getAccessibleName(el, roleDisplay);
   const value = getValue(el);
   const states = getStates(el);
   const target = getTarget(el);
+
+  // Enrich link text with nearest preceding heading so "Read more" becomes
+  // identifiable: [link] "Read more — LGBTQ article headline" → /url
+  if (roleDisplay === 'link') {
+    const heading = nearestHeadingText(el);
+    if (heading && name && !name.toLowerCase().includes(heading.toLowerCase().slice(0, 20))) {
+      name = `${name} — ${heading}`;
+    }
+  }
 
   // Format: [role] "name" [| value="..."] [| states] [ → target]
   const indent = '  '.repeat(depth);
@@ -650,6 +693,9 @@ export interface LinkEntry {
   index: number;
   /** Visible text or aria-label of the link. Truncated for speech. */
   text: string;
+  /** Nearest preceding heading (<h1>–<h6>), if found. Appended to text for
+   *  identification so "Read more" becomes "Read more — Article headline". */
+  heading: string;
   /** Resolved href value. */
   href: string;
 }
@@ -709,7 +755,13 @@ export function enumerateLinks(
     const text = ariaLabel || rawText;
     if (!text) continue;
 
-    out.push({ index: i + 1, text, href });
+    // Enrich with nearest preceding heading so "Read more" becomes identifiable
+    const heading = nearestHeadingText(el);
+    const displayText = heading && !text.toLowerCase().includes(heading.toLowerCase().slice(0, 20))
+      ? `${text} — ${heading}`
+      : text;
+
+    out.push({ index: i + 1, text: displayText, heading, href });
   }
   return out;
 }

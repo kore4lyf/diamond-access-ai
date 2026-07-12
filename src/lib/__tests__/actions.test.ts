@@ -912,3 +912,86 @@ describe('listLinksAction', () => {
     expect(out).toMatch(/1 link/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// clickAction — pre-click keyword verification guard
+// ---------------------------------------------------------------------------
+
+describe('clickAction keyword verification', () => {
+  it('passes verification when element text matches description keywords', () => {
+    const el = document.createElement('a');
+    el.href = '/news/health';
+    el.textContent = 'Health';
+    el.scrollIntoView = vi.fn();
+    vi.spyOn(el, 'click');
+    const snap = makeSnapshot([el]);
+    const out = clickAction(1, snap, 'Clicking Health');
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(el.click).toHaveBeenCalled();
+  });
+
+  it('re-matches by keywords when index points to wrong element', () => {
+    // Element 1 = "Health" nav link (no lgbtq in text/heading/href)
+    const healthLink = document.createElement('a');
+    healthLink.href = '/health';
+    healthLink.textContent = 'Health';
+    healthLink.scrollIntoView = vi.fn();
+    vi.spyOn(healthLink, 'click');
+
+    // Element 2 = "Read more" link with LGBTQ heading above it
+    const article = document.createElement('article');
+    const heading = document.createElement('h2');
+    heading.textContent = 'LGBTQ story: rights march in Amsterdam';
+    article.appendChild(heading);
+    const readMore = document.createElement('a');
+    readMore.href = '/lgbtq';
+    readMore.textContent = 'Read more';
+    readMore.scrollIntoView = vi.fn();
+    vi.spyOn(readMore, 'click');
+    article.appendChild(readMore);
+
+    // Snapshot has both elements (heading is not interactive, so not in elements)
+    const snap = makeSnapshot([healthLink, readMore]);
+
+    // LLM guesses index 1 (Health), description mentions "lgbtq"
+    const out = clickAction(1, snap, 'Opening the lgbtq story');
+    // Should re-match to element 2 (readMore) because nearestHeadingText
+    // finds the h2 "LGBTQ rights march" as a preceding sibling of readMore
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(readMore.click).toHaveBeenCalled();
+    expect(healthLink.click).not.toHaveBeenCalled();
+  });
+
+  it('returns ask-message when no element matches keywords', () => {
+    const healthLink = document.createElement('a');
+    healthLink.href = '/health';
+    healthLink.textContent = 'Health';
+    healthLink.scrollIntoView = vi.fn();
+    vi.spyOn(healthLink, 'click');
+
+    const sportsLink = document.createElement('a');
+    sportsLink.href = '/sports';
+    sportsLink.textContent = 'Sports';
+    sportsLink.scrollIntoView = vi.fn();
+
+    const snap = makeSnapshot([healthLink, sportsLink]);
+
+    // Description mentions "lgbtq" but neither element has that keyword
+    const out = clickAction(1, snap, 'Opening the LGBTQ article');
+    expect(out).toMatch(/couldn't find/i);
+    expect(out).toMatch(/list the links/i);
+    expect(healthLink.click).not.toHaveBeenCalled();
+  });
+
+  it('skips verification when description has no meaningful keywords', () => {
+    const el = document.createElement('button');
+    el.textContent = 'Submit';
+    el.scrollIntoView = vi.fn();
+    vi.spyOn(el, 'click');
+    const snap = makeSnapshot([el]);
+    // Generic description with only stop words → no keywords → skip guard
+    const out = clickAction(1, snap, 'Clicking the button');
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(el.click).toHaveBeenCalled();
+  });
+});
