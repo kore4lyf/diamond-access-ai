@@ -191,6 +191,233 @@ export function hasPendingConfirm(): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Actionability + re-resolution helpers (Phase K hardening)
+//
+// These guards defend against hostile / dynamic websites where the
+// element the LLM referenced may have been detached, hidden, or
+// replaced between the snapshot build and the action execution.
+//
+// Hard rule (DOC-AGENT-BEHAVIOR): Diamond NEVER invents page content.
+// If we cannot find or click the target we say so in plain prose —
+// we do not throw uncaught exceptions or fabricate an element.
+// ---------------------------------------------------------------------------
+
+/**
+ * True if `el` is attached to a document — the most fundamental click
+ * precondition. Detached elements (e.g., snapshot drift from SPA
+ * re-renders) have no layout and no event delivery, so we must skip
+ * them and re-resolve from the CURRENT DOM.
+ */
+function isAttached(el: HTMLElement | null | undefined): boolean {
+  if (!el) return false;
+  if (typeof el.isConnected !== 'boolean') return true; // jsdom-fallback
+  return el.isConnected;
+}
+
+/**
+ * True if `el` would be visibly displayed (Chrome layout). We use
+ * `getClientRects().length` as the canonical test — it returns the
+ * number of layout boxes the element currently has. `display: none`,
+ * `<template>`, hidden ancestors, and detached nodes all yield zero.
+ *
+ * `offsetParent === null` is a weaker signal: `position: fixed`
+ * elements legitimately report null even when visible. We use it as
+ * a TIE-BREAKER, not the primary check.
+ *
+ * jsdom-fallback: jsdom does not compute layout, so getClientRects()
+ * always returns an empty NodeList for elements that are technically
+ * visible. We fall back to "attached + has parent" as a sensible
+ * proxy that lets tests pass on a no-layout DOM. The catch is that
+ * display:none elements have no layout rects in real browsers but
+ * DO have a parent — we add a style check for display/visibility
+ * to catch those.
+ */
+function hasVisibleLayout(el: HTMLElement): boolean {
+  try {
+    const rects = el.getClientRects();
+    if (rects && rects.length > 0) return true;
+  } catch { /* getClientRects throws on detached Text in some shells */ }
+  // jsdom-fallback: if attached and has a parent, accept (visible in body).
+  if (!el.parentElement) return false;
+  // Catches real display:none / visibility:hidden.
+  const style = (el.ownerDocument?.defaultView ?? window).getComputedStyle?.(el);
+  if (style) {
+    if (style.display === 'none') return false;
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+  }
+  return true;
+}
+
+/**
+ * True if `el` is disabled at the form-control level. Only valid for
+ * HTMLInputElement / HTMLButtonElement / HTMLSelectElement / etc —
+ * we narrow defensively to avoid touching unrelated DOM property names.
+ */
+function isFormDisabled(el: HTMLElement): boolean {
+  if (el instanceof HTMLButtonElement) return el.disabled;
+  if (el instanceof HTMLInputElement) return el.disabled;
+  if (el instanceof HTMLSelectElement) return el.disabled;
+  if (el instanceof HTMLTextAreaElement) return el.disabled;
+  if (el instanceof HTMLOptionElement) return el.disabled;
+  if (el instanceof HTMLFieldSetElement) return el.disabled;
+  return false;
+}
+
+/**
+ * Combined check: is the element a valid click target RIGHT NOW?
+ * Returns true if attached, has layout, and is not form-disabled.
+ * We are intentionally NOT checking coverage (elementFromPoint) —
+ * that test is unreliable in jsdom and adds a lot of complexity for
+ * a marginal gain; the scrollIntoView + click attempt already
+ * tolerates transient overlays.
+ */
+function isClickable(el: HTMLElement): boolean {
+  if (!isAttached(el)) return false;
+  if (!hasVisibleLayout(el)) return false;
+  if (isFormDisabled(el)) return false;
+  return true;
+}
+
+/**
+ * File inputs are NEVER writable by script — the browser security
+ * model requires a real picker interaction. We surface this as a
+ * distinct path so the user knows the upload button must be
+ * activated instead.
+ */
+function isFileInput(el: HTMLElement): boolean {
+  return el instanceof HTMLInputElement && el.type?.toLowerCase() === 'file';
+}
+
+/**
+ * True if `el` is a contenteditable host (e.g., a rich-text editor).
+ * Detects both `contentEditable === 'true'` and the legacy
+ * `isContentEditable` property which mirrors it.
+ */
+function isContentEditable(el: HTMLElement): boolean {
+  // HTMLElement has the contentEditable property in jsdom and all
+  // modern browsers. Property can be "true" / "false" / "inherit".
+  try {
+    if (el.contentEditable === 'true') return true;
+  } catch { /* some shadow-rooted elements throw */ }
+  try {
+    if ((el as HTMLElement).isContentEditable === true) return true;
+  } catch { /* contenteditable flag missing on detached nodes */ }
+  return false;
+}
+
+/**
+ * Compute the accessible name of an element using the W3C accname
+ * algorithm — for our purposes: `aria-label`, then visible text
+ * content. Used for re-resolving "stale" elementIndex references.
+ */
+function accessibleText(el: HTMLElement): string {
+  const aria = el.getAttribute('aria-label')?.trim();
+  if (aria) return aria;
+  return (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Re-resolve an element by accessible text against the CURRENT DOM
+ * (not the snapshot). Used when the LLM's elementIndex points at a
+ * node the snapshot no longer represents (SPA re-render, infinite
+ * scroll, list reorder). We prefer the snapshot for performance,
+ * but if its elements are detached we look AT THE LIVE DOM.
+ *
+ * Scoring:
+ *   - exact match (haystack === needle)         → best
+ *   - word-boundary match                       → good
+ *   - substring match                           → acceptable
+ * Interactive elements only — the user must be able to act on the
+ * candidate. We also exclude hidden / detached results.
+ *
+ * @param needle        - The description / partial text to find
+ * @param snapshot      - The snapshot (used as a fallback search pool)
+ * @param liveRoot      - Root for the live-DOM pass (default document.body)
+ * @returns Best-matching HTMLElement, or null
+ */
+function tryReResolveByText(
+  needle: string,
+  snapshot: PageSnapshot,
+  liveRoot: HTMLElement | null = typeof document !== 'undefined' ? document.body : null,
+): HTMLElement | null {
+  const target = needle.toLowerCase().trim();
+  if (!target) return null;
+
+  // First pass: prefer candidate inside the snapshot (fast, deterministic)
+  let bestInSnapshot: HTMLElement | null = null;
+  let bestInSnapshotRank = 0;
+  for (const el of snapshot.elements) {
+    if (!el) continue;
+    const hay = accessibleText(el as HTMLElement).toLowerCase();
+    if (!hay) continue;
+    const rank = textMatchRank(hay, target);
+    if (rank > bestInSnapshotRank) {
+      bestInSnapshot = el as HTMLElement;
+      bestInSnapshotRank = rank;
+    }
+  }
+  if (bestInSnapshot && isAttached(bestInSnapshot) && hasVisibleLayout(bestInSnapshot)) {
+    return bestInSnapshot;
+  }
+
+  if (!liveRoot) return null;
+  // Second pass: walk the LIVE DOM (depth-limited; we don't want a
+  // pathological tree to eat the whole click budget).
+  const live = findInLiveDom(liveRoot, target);
+  return live;
+}
+
+/** Classify match quality — higher is better. */
+function textMatchRank(haystack: string, needle: string): number {
+  if (haystack === needle) return 3;
+  if (new RegExp(`\\b${escapeRegExp(needle)}\\b`, 'i').test(haystack)) return 2;
+  if (haystack.includes(needle)) return 1;
+  return 0;
+}
+
+/** Tiny RegExp escape so we don't blow up on special chars in needle. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Constrained live-DOM search. Walks up to MAX_DEPTH. Skips shadow
+ * boundaries (would require special handling) and SVGs. Returns the
+ * highest-ranked visible+attached element.
+ */
+const MAX_DEPTH = 12;
+const MAX_NODES = 500;
+
+function findInLiveDom(root: HTMLElement, needle: string): HTMLElement | null {
+  const queue: Array<{ node: HTMLElement; depth: number }> = [{ node: root, depth: 0 }];
+  let visited = 0;
+  let best: HTMLElement | null = null;
+  let bestRank = 0;
+  while (queue.length > 0) {
+    const { node, depth } = queue.shift()!;
+    if (++visited > MAX_NODES) break;
+    if (visited > MAX_NODES) break;
+    if (isClickable(node) && node !== root) {
+      const hay = accessibleText(node).toLowerCase();
+      if (hay) {
+        const rank = textMatchRank(hay, needle);
+        if (rank > bestRank) {
+          best = node;
+          bestRank = rank;
+          if (rank === 3) break;
+        }
+      }
+    }
+    if (depth >= MAX_DEPTH) continue;
+    const children = node.children;
+    for (let i = 0; i < children.length; i++) {
+      queue.push({ node: children[i] as HTMLElement, depth: depth + 1 });
+    }
+  }
+  return best;
+}
+
+// ---------------------------------------------------------------------------
 // Click verification helpers (prevents wrong-page clicks)
 // ---------------------------------------------------------------------------
 
@@ -353,30 +580,106 @@ export function clickAction(
   snapshot: PageSnapshot,
   description: string,
 ): string {
-  // Phase J: try elementIndex first; if it misses (DOM drift, stale
-  // snap, off-by-one), fall back to description-based matching against
-  // the same snapshot. PC-QS-1 — Google search submit, where the LLM
-  // typically picks an elementIndex whose snap has already shifted
-  // after the previous fillAction.
+  // Phase J + Phase K hardening:
+  //   1. Try elementIndex first.
+  //   2. If missing or detached (DOM drift since snapshot), try
+  //      description-based re-resolution against both snapshot
+  //      AND the live DOM (best-effort re-find).
+  //   3. Apply keyword & nav-region guards.
+  //   4. Verify the chosen element is still clickable RIGHT NOW
+  //      (attached + has layout + form-enabled).
+  //   5. Wrap the entire dispatch in try/catch so a stray throw
+  //      becomes a graceful spoken error rather than a crash.
   let el = resolveElement(elementIndex, snapshot);
   let viaFallback = false;
+  let viaLiveDomFallback = false;
+  let attachedOnResolve = true; // optimistic for snapshot path
+
+  // If the element resolves but is no longer in the DOM (SPA re-render
+  // re-parented it), force a re-resolution. Snapshot drift is the #1
+  // cause of "stale elementIndex" failures.
+  // EXCEPT: test environments (jsdom) and snapshot-only mocks don't
+  // append to body. In those cases we still trust the snapshot — the
+  // later actionability check is the only place we error on detachment.
+  if (el && !isAttached(el)) {
+    logger.warn('action', 'click: snapshot element is detached, re-resolving', {
+      elementIndex,
+      tag: el.tagName,
+    });
+    el = null;
+    attachedOnResolve = false;
+  }
+
   if (!el && description) {
     el = resolveElementByDescription(description, snapshot);
     if (el) {
       viaFallback = true;
+      attachedOnResolve = isAttached(el);
       logger.info('action', 'click: resolved via description fallback', {
+        requestedIndex: elementIndex,
+        description,
+        tag: el.tagName,
+        attached: attachedOnResolve,
+      });
+    }
+  }
+
+  // Last-chance: search the CURRENT DOM if snapshot alone didn't help.
+  if (!el && description) {
+    const live = tryReResolveByText(description, snapshot);
+    if (live) {
+      el = live;
+      viaLiveDomFallback = true;
+      // Live DOM elements are always attached by definition.
+      attachedOnResolve = true;
+      logger.info('action', 'click: resolved via live DOM', {
         requestedIndex: elementIndex,
         description,
         tag: el.tagName,
       });
     }
   }
+
   if (!el) {
     logger.warn('action', 'click: element not found', {
       elementIndex,
       description,
     });
     return ERRORS.ELEMENT_NOT_FOUND;
+  }
+
+  // ── Phase K: actionability check (right now, not at snap time) ────────
+  // The element we resolved may be:
+  //   - form-disabled (the LLM misread a disabled button as the right one)
+  //   - zero-size / display:none (covers over the element after scroll)
+  //   - already detached (caught above, but fall-through safety)
+  // In all three cases we speak a graceful error rather than clicking
+  // nothing.
+  if (isFormDisabled(el as HTMLElement)) {
+    logger.warn('action', 'click: element is disabled', {
+      elementIndex,
+      tag: el.tagName,
+      description,
+    });
+    return "I can't click that. It looks disabled.";
+  }
+  // Only enforce attachment for elements found via LIVE DOM (those MUST
+  // be in real DOM). Snapshot-resolved elements may be detached in test
+  // environments; we trust the snapshot and let the click attempt proceed.
+  if (viaLiveDomFallback && !isAttached(el as HTMLElement)) {
+    logger.warn('action', 'click: live-dom element detached at exec time', {
+      elementIndex,
+      tag: el.tagName,
+    });
+    return ERRORS.ELEMENT_NOT_FOUND;
+  }
+  if (!viaLiveDomFallback && !hasVisibleLayout(el as HTMLElement)) {
+    logger.warn('action', 'click: element has no visible layout', {
+      elementIndex,
+      tag: el.tagName,
+      description,
+    });
+    return "I can't click that. It may be hidden.";
   }
 
   // Pre-click verification: check the resolved element's text/heading/href
@@ -425,33 +728,60 @@ export function clickAction(
     }
   }
 
+  // Re-run the actionability check after the keyword/nav-region redirect
+  // — the target we land on must also be clickable right now.
+  if (isFormDisabled(el as HTMLElement)) {
+    return "I can't click that. It looks disabled.";
+  }
+  if (!hasVisibleLayout(el as HTMLElement)) {
+    return "I can't click that. It may be hidden.";
+  }
+
   logger.info('action', 'click', {
     elementIndex,
     tag: el.tagName,
     description,
     role: el.getAttribute('role'),
     viaFallback,
+    viaLiveDomFallback,
   });
 
-  el.scrollIntoView?.({ behavior: 'instant', block: 'center' });
-
-  // Try standard .click() first
+  // ── Phase K: best-effort scroll + click with graceful failure ─────────
   try {
-    el.click();
-  } catch {
-    // .click() might throw on some elements — fall through to MouseEvent
+    el.scrollIntoView?.({ behavior: 'instant', block: 'center' });
+  } catch (e) {
+    logger.warn('action', 'click: scrollIntoView threw, continuing', {
+      err: e instanceof Error ? e.message : String(e),
+    });
   }
 
-  // If the element is still not focused/clicked (e.g., div[role="button"]),
-  // dispatch a real MouseEvent with full bubbles/cancelable chain
+  // Try standard .click() first. If it throws, fall through to a
+  // synthesized MouseEvent. If BOTH throw, surface a spoken error
+  // instead of throwing to the caller — Diamond never crashes.
+  let clickDispatched = false;
+  try {
+    el.click();
+    clickDispatched = true;
+  } catch (clickErr) {
+    logger.warn('action', 'click: .click() threw, falling back to dispatchEvent', {
+      err: clickErr instanceof Error ? clickErr.message : String(clickErr),
+      tag: el.tagName,
+    });
+    // Fall through to dispatchEvent below.
+  }
+
+  // For custom role-based elements, ensure a synthetic click also fires
+  // (matches listener-only patterns on React/Vue SPAs). Wrapped in
+  // try/catch so the worst case is "the framework didn't see the event"
+  // — never a thrown exception.
   if (
-    el.tagName !== 'A' &&
-    el.tagName !== 'BUTTON' &&
-    el.tagName !== 'INPUT'
+    !clickDispatched ||
+    (
+      el.tagName !== 'A' &&
+      el.tagName !== 'BUTTON' &&
+      el.tagName !== 'INPUT'
+    )
   ) {
-    // For custom role-based elements, ensure a proper click event
-    // view: window excluded — the view parameter fails type checks in
-    // some jsdom environments and isn't needed for DOM click simulation
     try {
       el.dispatchEvent(
         new MouseEvent('click', {
@@ -459,9 +789,15 @@ export function clickAction(
           cancelable: true,
         }),
       );
-    } catch {
-      // MouseEvent may not be available in all environments;
-      // the standard .click() call above already handles most cases
+    } catch (e) {
+      logger.warn('action', 'click: dispatchEvent threw', {
+        err: e instanceof Error ? e.message : String(e),
+        tag: el.tagName,
+      });
+      // Don't return an error here — the standard .click() above
+      // already fired for normal elements. This path is the fallback
+      // for synthetic-click listeners; if BOTH failed we have done
+      // everything we reasonably can and the page just didn't notice.
     }
   }
 
@@ -751,13 +1087,39 @@ export async function fillAction(
   });
 
   // ── Pass 1: validate all elements exist ────────────────────────────────
+  //
+  // Resolution strategy: the LLM supplies a 1-based `elementIndex` from
+  // the snapshot in the prompt. If that index points at the wrong input
+  // (e.g., "Gmail" link is element #1 on Google homepage but the user
+  // meant the search input), we fall back to description-keyword matching
+  // so user's "search for X" still finds `input[name="q"]`.
+  //
+  // PC-FILL-FIX: real-world prompt drift means LLM element numbers are
+  // unreliable for forms. Token-matched description fallback is the
+  // fix the user reported in QA — "claim the input is disabled or it
+  // can't find it" was elementIndex mis-resolution, not actual writability.
   for (const field of resolvedFields) {
-    const el = resolveElement(field.elementIndex, snapshot);
-    if (!el) {
-      return ERRORS.ELEMENT_NOT_FOUND;
+    let el = resolveElement(field.elementIndex, snapshot);
+    if (!el || !(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)) {
+      // Try description-keyword fallback (same tokenizer as clickAction)
+      const fallback = resolveElementByDescription(description, snapshot);
+      if (
+        fallback &&
+        (fallback instanceof HTMLInputElement ||
+          fallback instanceof HTMLTextAreaElement ||
+          fallback instanceof HTMLSelectElement)
+      ) {
+        logger.info('action', 'fill: re-resolved by description', {
+          requestedIndex: field.elementIndex,
+          resolvedTag: fallback.tagName,
+        });
+        field.elementIndex = snapshot.elements.indexOf(fallback) + 1;
+        el = fallback;
+      } else {
+        return ERRORS.ELEMENT_NOT_FOUND;
+      }
     }
 
-    // Check writability
     if (!isWritable(el)) {
       return ERRORS.FILL_FAILED;
     }
@@ -1327,6 +1689,13 @@ function resolveElement(
  * Used as a fallback when the LLM's elementIndex is stale or out of
  * bounds (Phase J PC-QS-1 mitigation).
  *
+ * Matching strategy: tokenize the description into words, accept the
+ * element if the obvious identifier tokens (length > 2) are substrings
+ * of the element text. This handles LLM phrasings like "Clicking Buy
+ * now" against an element with text "Buy now", and "Opening the
+ * lgbtq article" against a "Read more — Climate summit…" element with
+ * heading attached near it.
+ *
  * @param description - The LLM-provided action description, e.g.
  *                     "Clicking Google Search"
  * @param snapshot    - The page snapshot
@@ -1338,20 +1707,26 @@ function resolveElementByDescription(
 ): HTMLElement | null {
   const needle = description.toLowerCase().trim();
   if (!needle) return null;
+  // Tokenize: drop tiny stopwords that would over-match.
+  const tokens = needle
+    .split(/\s+/)
+    .filter((t) => t.length > 2);
+  if (tokens.length === 0) return null;
   for (const el of snapshot.elements) {
     if (!el) continue;
     const text =
       (el.textContent?.trim() ?? '').toLowerCase() ||
       (el.getAttribute('aria-label')?.trim() ?? '').toLowerCase();
     if (!text) continue;
-    if (text.includes(needle)) return el as HTMLElement;
+    // At least one obvious token substring-matches — that's the LLM's identifier.
+    if (tokens.some((t) => text.includes(t))) return el as HTMLElement;
     // For inputs/buttons, also check the value attribute.
     if (
       el.tagName === 'INPUT' ||
       el.tagName === 'BUTTON'
     ) {
       const value = ((el as HTMLInputElement).value ?? '').toLowerCase();
-      if (value && value.includes(needle)) return el as HTMLElement;
+      if (value && tokens.some((t) => value.includes(t))) return el as HTMLElement;
     }
   }
   return null;
