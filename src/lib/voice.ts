@@ -146,9 +146,24 @@ export function playBeep(type: BeepType): void {
 
 /**
  * Speak text via SpeechSynthesisUtterance.
- * Resolves on `onend` or `onerror` — never blocks on TTS failure.
+ * Resolves on the final utterance's `onend` or `onerror` — never blocks on
+ * TTS failure.
  *
- * Voice selection priority:
+ * Hardening (this revision):
+ *   - null / undefined / empty input → resolves immediately, no TTS call.
+ *   - Sanitization pipeline before TTS, in order:
+ *       stripHtmlTags → sanitizeTextForTTS (zero-width + control chars) →
+ *       stripMarkdownLinks → stripSpokenMarkdown (existing).
+ *     The existing stripSpokenMarkdown handles **bold**, _italic_, code
+ *     fences, escape sequences, and JSON brackets; voice.ts adds HTML tag
+ *     and markdown link stripping because LLM drift has been seen leaking
+ *     `<b>...</b>` and `[text](url)` patterns that TTS reads literally.
+ *   - Very long text is chunked on sentence / word / hard-cut boundaries
+ *     and the chunks are queued sequentially so the TTS engine doesn't
+ *     silently truncate an oversized response. Single-chunk input still
+ *     produces a single utterance — onend resolves the outer promise.
+ *
+ * Voice selection priority (unchanged):
  *   1. localService === true && lang === 'en-US'
  *   2. lang === 'en-US'
  *   3. voices[0] (fallback)
@@ -157,7 +172,7 @@ export function playBeep(type: BeepType): void {
  * for user-initiated interrupts (Alt+D / double-ESC while speaking).
  * See stopSpeaking() JSDoc for the screen-reader caveat.
  */
-export function speak(text: string): Promise<void> {
+export function speak(text: string | null | undefined): Promise<void> {
   return new Promise((resolve) => {
     if (
       typeof speechSynthesis === 'undefined' ||
@@ -168,26 +183,47 @@ export function speak(text: string): Promise<void> {
       return;
     }
 
-    // Defense-in-depth (Round 1B): strip markdown / JSON / escape noise
-    // from any text going to TTS. The LLM is told to produce plain prose,
-    // but model drift can leak `**`, `_`, `\\`, brackets etc. TTS reads
-    // those as words ("asterisk", "underscore", "backslash backslash")
-    // — disaster for spoken output. Single choke point here covers every
-    // call site without touching every speak() caller.
-    const cleanText = stripSpokenMarkdown(text);
-    if (cleanText !== text) {
+    // No-op for null / undefined / non-string / empty / whitespace input.
+    // A blind user hearing an empty or error-spoken utterance is worse than
+    // a silent resolution — keeping the contract here means callers can
+    // safely pipe any LLM output through speak() without empty-result
+    // surprise. Existing callers passing '' are unaffected (this branch
+    // wasn't previously reachable).
+    if (
+      typeof text !== 'string' ||
+      text.trim() === ''
+    ) {
+      resolve();
+      return;
+    }
+
+    // Defense-in-depth (Round 1B + Hardening). Strip markdown / JSON /
+    // escape noise from any text going to TTS. The LLM is told to produce
+    // plain prose, but model drift can leak `**`, `_`, `\\`, brackets,
+    // HTML tags, and links. TTS reads those as words ("asterisk",
+    // "underscore", "backslash backslash", "less than b greater than",
+    // "open bracket here close bracket") — disaster for spoken output.
+    // Single choke point covers every speak() caller.
+    const beforeChars = text.length;
+    let cleanText = stripHtmlTags(text);
+    cleanText = sanitizeTextForTTS(cleanText);
+    cleanText = stripMarkdownLinks(cleanText);
+    cleanText = stripSpokenMarkdown(cleanText);
+
+    // Sanitization collapsed the input to nothing — fall through as no-op.
+    if (cleanText.trim() === '') {
+      resolve();
+      return;
+    }
+
+    if (cleanText.length !== beforeChars) {
       logger.debug('tts', 'spoken text cleaned', {
-        beforeChars: text.length,
+        beforeChars,
         afterChars: cleanText.length,
       });
     }
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-
-    // Select best available voice
+    // Select best available voice once — reused for every chunk.
     const voices = speechSynthesis.getVoices();
     const preferred =
       voices.find((v) => v.lang === 'en-US' && v.localService) ??
@@ -195,18 +231,50 @@ export function speak(text: string): Promise<void> {
       voices[0] ??
       null;
 
-    if (preferred) {
-      utterance.voice = preferred;
+    // Chunk very long text so the TTS engine doesn't silently truncate
+    // an oversized response. Single-chunk input preserves original
+    // single-utterance behavior to keep existing tests green.
+    const chunks = chunkTextForTTS(cleanText);
+    if (chunks.length > 1) {
+      logger.debug('tts', 'text chunked for sequential TTS', {
+        chunkCount: chunks.length,
+        totalChars: cleanText.length,
+      });
     }
 
-    utterance.onend = () => { speakingFlag = false; resolve(); };
-    utterance.onerror = () => { speakingFlag = false; resolve(); }; // Don't block on TTS errors
+    const speakNext = (index: number): void => {
+      // Chain finished — clear flag and resolve once.
+      if (index >= chunks.length) {
+        speakingFlag = false;
+        resolve();
+        return;
+      }
 
-    // Chrome loads voices asynchronously; if none yet, speak() still works
-    // with the system default voice. Do NOT set utterance.voice after speaking
-    // as that can re-trigger Chrome's queue on some pages (BBC re-read bug).
-    speakingFlag = true;
-    speechSynthesis.speak(utterance);
+      const utterance = new SpeechSynthesisUtterance(chunks[index]);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
+
+      if (preferred) {
+        // Chrome loads voices asynchronously; if none yet, speak() still
+        // works with the system default voice. Do NOT set utterance.voice
+        // after speaking as that can re-trigger Chrome's queue on some
+        // pages (BBC re-read bug). Setting once here per chunk is safe.
+        utterance.voice = preferred;
+      }
+
+      // Advance the chain on either success or error — never block. The
+      // outer promise resolves once we've drained every chunk. onerror on
+      // a non-final chunk continues the chain (matches single-utterance
+      // "don't block on TTS errors" intent).
+      utterance.onend = () => { speakNext(index + 1); };
+      utterance.onerror = () => { speakNext(index + 1); };
+
+      speakingFlag = true;
+      speechSynthesis.speak(utterance);
+    };
+
+    speakNext(0);
   });
 }
 
@@ -227,6 +295,11 @@ export function speak(text: string): Promise<void> {
  * @returns Promise resolving with the recognized transcript (or '' on error)
  */
 export function startListening(): Promise<string> {
+  // Install the visibility hook lazily so a background tab doesn't
+  // keep the mic armed. Idempotent — the listener installs at most
+  // once per module instance.
+  ensureVisibilityHook();
+
   // Guard: no-op if already listening (prevents double-activation)
   if (listeningFlag) {
     return Promise.resolve('');
@@ -249,6 +322,15 @@ export function startListening(): Promise<string> {
     }
 
     const recognition = new SpeechRecognitionCtor();
+    // Defensive null guard — a ctor returning null/undefined used to
+    // crash the next listener wiring (TypeError on `recognition.onstart =
+    // ...`). Resolve silently instead. Chrome never does this, but a
+    // hostile / mocked environment could.
+    if (!recognition) {
+      console.log('[Diamond] SpeechRecognition constructor returned null');
+      resolve('');
+      return;
+    }
     activeRecognition = recognition;
     listeningFlag = true;
 
@@ -311,8 +393,11 @@ export function startListening(): Promise<string> {
         error === 'service-not-allowed'
       ) {
         speak(ERRORS.MIC_BLOCKED);
-      } else if (error === 'no-speech') {
-        // Silent — resolve with empty transcript
+      } else if (error === 'no-speech' || error === 'aborted') {
+        // Silent — resolve with empty transcript. 'aborted' is expected
+        // when the caller (or the visibility hook) calls stop() while
+        // results were still pending; treat it the same as no-speech so
+        // Alt+D / push-to-talk doesn't trigger a noisy error message.
         cleanup(false);
         resolve('');
         return;
@@ -329,11 +414,25 @@ export function startListening(): Promise<string> {
       recognition.stop();
     };
 
-    recognition.start();
-    logger.info('stt', 'recognition started', {
-      lang: recognition.lang,
-      processLocally: recognition.processLocally,
-    });
+    try {
+      recognition.start();
+      logger.info('stt', 'recognition started', {
+        lang: recognition.lang,
+        processLocally: recognition.processLocally,
+      });
+    } catch (e) {
+      // start() can throw InvalidStateError when called twice in rapid
+      // succession (the very common Alt+D / Alt+D case) — and the
+      // guarding isListeningFlag check above doesn't always catch it
+      // because the false-return path leaves the recognizer half-armed.
+      // Resolve empty rather than throwing to the caller.
+      logger.warn('stt', 'recognition.start() threw', {
+        err: e instanceof Error ? e.message : String(e),
+      });
+      listeningFlag = false;
+      activeRecognition = null;
+      resolve('');
+    }
   });
 }
 
@@ -537,8 +636,12 @@ export function startHandsFree(
         restartCount: handsFreeRestartCount,
       });
 
-      if (error === 'no-speech') {
-        // Expected — onend's auto-restart covers it.
+      if (error === 'no-speech' || error === 'aborted') {
+        // Expected — 'aborted' fires when stop() is called (e.g. final
+        // result processing in our onresult handler), 'no-speech' fires
+        // when the user simply didn't speak. onend's auto-restart covers
+        // both — fall through silently rather than counting them or
+        // surfacing STT errors to the user.
         return;
       }
       if (error === 'not-allowed' || error === 'service-not-allowed') {
@@ -717,4 +820,167 @@ function cleanup(stoppedByResult: boolean): void {
   }
 
   activeRecognition = null;
+}
+
+// ---------------------------------------------------------------------------
+// Safety hooks
+// ---------------------------------------------------------------------------
+
+/**
+ * One-shot document.visibilitychange listener: if the tab becomes hidden
+ * (user switched tabs / minimized the window) while a recognizer is
+ * armed, stop it so the mic is not silently listening in a background
+ * tab. For a hands-free session we additionally clear the loop so we
+ * don't auto-restart into a tab the user can't see — they re-activate
+ * with Alt+D when they return.
+ *
+ * Guardrail: install at most once per module instance. The lazy
+ * `ensureVisibilityHook()` call inside startListening / startHandsFree
+ * covers all entry points without polluting global state at import
+ * time (vitest with resetModules re-imports the module per test, and
+ * re-installing would simply no-op via the flag).
+ */
+let visibilityHookInstalled = false;
+
+function ensureVisibilityHook(): void {
+  if (visibilityHookInstalled) return;
+  if (typeof document === 'undefined') return;
+  visibilityHookInstalled = true;
+  document.addEventListener('visibilitychange', onVisibilityChange);
+}
+
+/**
+ * Visibilitychange handler — stops the live recognizer on tab-hide.
+ * Safe to call when no recognizer is active: it just no-ops.
+ */
+function onVisibilityChange(): void {
+  if (typeof document === 'undefined') return;
+  if (document.visibilityState !== 'hidden') return;
+
+  const r = activeRecognition;
+  if (r) {
+    try {
+      r.stop();
+    } catch {
+      // already stopped — ignore (matches cleanup()'s tolerant pattern)
+    }
+  }
+
+  // For a hands-free session we also exit the loop. The pending `onend`
+  // from r.stop() will see handsFreeActive=false and skip the
+  // auto-restart, so we don't burn a recognizer in a background tab.
+  if (handsFreeActive) {
+    clearHandsFreeSession('tab-hidden');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Text utilities for TTS (Hardening)
+// ---------------------------------------------------------------------------
+
+/** Maximum characters per TTS chunk. Conservative — typical Chrome /
+ *  Safari TTS engines cap utterances around ~1k chars; 480 leaves head
+ *  room while still catching most LLM page-summary outputs in 2-3
+ *  utterances. */
+const MAX_TTS_CHUNK_CHARS = 480;
+
+/**
+ * Strip zero-width unicode and control characters that TTS reads aloud
+ * oddly (zero-width spaces, byte-order marks, soft hyphens, C0 control
+ * codes except \n/\r/\t which \s+ collapse handles in
+ * stripSpokenMarkdown). Pure defensive pass — unaware of any model
+ * behavior, just removes invisible / non-printable bytes.
+ */
+function sanitizeTextForTTS(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/[\u200B-\u200F\uFEFF\u00AD]/g, '') // zero-width chars + soft hyphen + BOM
+    // Control chars except \n \r \t (handled by whitespace collapse).
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, '');
+}
+
+/**
+ * Strip stray HTML tags like `<b>`, `</b>`, `<a href="...">`. TTS otherwise
+ * reads them literally as "less than b greater than". Conservative —
+ * strips any `<` that begins with an ASCII letter and any `</...>`. Does
+ * NOT strip spans / divs / script content — the LLM is told to produce
+ * prose, this is a defense-net for when it doesn't.
+ */
+function stripHtmlTags(text: string): string {
+  if (!text) return text;
+  return text.replace(/<\/?[a-zA-Z][^>\n]*>/g, '');
+}
+
+/**
+ * Strip markdown links `[text](url)` → `text`. The spoken copy should be
+ * the link's prose, not the URL — TTS would otherwise pronounce every
+ * percent-encoded character ("%20" → "percent twenty"). Doesn't touch
+ * bare `<a href="...">` since stripHtmlTags handles those.
+ */
+function stripMarkdownLinks(text: string): string {
+  if (!text) return text;
+  return text.replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, '$1');
+}
+
+/**
+ * Split a long TTS payload into ≤ `maxChars` chunks at sentence
+ * boundaries (priority order: quoted period/exclam/question, plain
+ * terminator, comma, last space, hard cut).
+ *
+ * Example (maxChars=20):
+ *   "Hello world. This is sentence two. Bye."
+ *   → ["Hello world.", "This is sentence two.", "Bye."]
+ *
+ * The chunker preserves the existing single-call behavior for short
+ * input: it returns `[text]` whenever `text.length <= maxChars`, so
+ * the outer speak() path keeps its single-utterance shape for typical
+ * page-summary outputs.
+ */
+function chunkTextForTTS(
+  text: string,
+  maxChars: number = MAX_TTS_CHUNK_CHARS,
+): string[] {
+  if (text.length <= maxChars) return [text];
+
+  // Try sentence boundaries in priority order. Each separator's last
+  // occurrence within the slice wins; longer matches (`."` over `.`)
+  // are checked first so quoted endings stay attached to the chunk.
+  const sentenceSeps = ['." ', '!" ', '?" ', '.\n', '!\n', '?\n', '. ', '! ', '? '];
+
+  const chunks: string[] = [];
+  let remaining = text;
+
+  while (remaining.length > maxChars) {
+    const slice = remaining.slice(0, maxChars);
+    let cutAt = -1;
+
+    for (const sep of sentenceSeps) {
+      const idx = slice.lastIndexOf(sep);
+      if (idx > cutAt) cutAt = idx + sep.length;
+    }
+
+    if (cutAt <= 0) {
+      // No sentence break — try a comma (with trailing space).
+      const commaIdx = slice.lastIndexOf(', ');
+      if (commaIdx > 0) cutAt = commaIdx + 2;
+    }
+
+    if (cutAt <= 0) {
+      // No punctuation within the slice — split on the last space.
+      const spaceIdx = slice.lastIndexOf(' ');
+      cutAt = spaceIdx > 0 ? spaceIdx : maxChars;
+    }
+
+    const chunk = remaining.slice(0, cutAt).trim();
+    if (chunk.length > 0) chunks.push(chunk);
+    remaining = remaining.slice(cutAt).trimStart();
+
+    // Safety net: if the loop somehow doesn't make progress (shouldn't
+    // happen but a paranoid limit prevents an infinite spin during
+    // pathological input).
+    if (remaining.length === 0) break;
+  }
+
+  if (remaining.length > 0) chunks.push(remaining);
+  return chunks;
 }

@@ -6,7 +6,13 @@
 // Phase G: Session + profile, conversation history, goal detection, profile fills
 
 import { defineBackground } from 'wxt/utils/define-background';
-import { callLLMWithRetry, callVLM, captureUserSpeech } from '../lib/fireworks';
+import {
+  callLLMWithRetry,
+  callVLM,
+  captureUserSpeech,
+  capText,
+  MAX_RESPONSE_CHARS,
+} from '../lib/fireworks';
 import { chunkForRead } from '../lib/content-chunker';
 import { cleanChunks } from '../lib/read-aloud-cleanup';
 import { summarizeChunks } from '../lib/map-reduce';
@@ -689,8 +695,15 @@ async function handleCommand(
     const responseText = await callLLMWithRetry(PERSONA_BLOCK, userMessage);
     const llmMs = llmSw.stop();
 
+    // Defense-in-depth: callLLMWithRetry already caps at MAX_RESPONSE_CHARS
+    // on its raw-text fallback path, but the JSON-stringify-success path
+    // returns the smaller inner object sized only by the model. Cap here
+    // anyway so a model that hallucinates an enormous JSON blob (large
+    // speech string, deep elementIndex arrays) can't overflow content.ts.
+    const safeResponseText = capText(responseText, MAX_RESPONSE_CHARS);
+
     logger.info('llm_response', 'received', {
-      length: responseText.length,
+      length: safeResponseText.length,
       ms: llmMs,
     });
 
@@ -710,7 +723,7 @@ async function handleCommand(
     });
     logger.debug('storage', 'turn appended', { conversationLen: session.conversation.length + 1 });
 
-    sendResponse({ text: responseText });
+    sendResponse({ text: safeResponseText });
     sw.stop('done');
   } catch (e: unknown) {
     console.error('[background] COMMAND error:', e);
@@ -828,6 +841,14 @@ async function handleVlmRequest(
 ): Promise<void> {
   const sw = new logger.Stopwatch('vlm', 'VLM round-trip');
   try {
+    // Hard cap on the captured screenshot size. A 4K+ screen capture can
+    // easily produce 8-15 MB PNGs; posting that to Fireworks wastes
+    // vision tokens and risks a 413/400 from the upstream. 8 MB ≈ a
+    // legitimate full-page screenshot at 1080p; anything bigger means
+    // the user is on a virtual canvas or an unusual screen and we fall
+    // back to text-only structure in content.ts.
+    const MAX_IMAGE_BASE64_CHARS = 8 * 1024 * 1024;
+
     logger.info('vlm', 'captureVisibleTab requested');
     const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
 
@@ -841,24 +862,48 @@ async function handleVlmRequest(
       return;
     }
 
+    if (base64.length > MAX_IMAGE_BASE64_CHARS) {
+      logger.warn('vlm', 'oversized capture, skipping vision fallback', {
+        base64Len: base64.length,
+        max: MAX_IMAGE_BASE64_CHARS,
+      });
+      // Empty description — content.ts will fall through to text-only
+      // DOM structure if `vlmResp?.description` is falsy. No need to
+      // surfacing an unavailable error here; the user's page structure
+      // is already prepared.
+      sendResponse({ description: '' });
+      sw.stop('oversized');
+      return;
+    }
+
     logger.debug('vlm', 'image captured', { base64Len: base64.length });
 
     const llmSw = new logger.Stopwatch('llm_response', 'VLM call');
     const description = await callVLM(PERSONA_BLOCK, base64, buildVlmPrompt());
     const llmMs = llmSw.stop();
 
+    // Cap the description — a runaway vision model can return huge
+    // descriptions that would flood the spoken prompt. The content
+    // script reads vlmResp.description into the COMMAND prompt and also
+    // uses the prefix 'Visual context: ...' on the pageContext assembly.
+    const safeDescription = capText(description, MAX_RESPONSE_CHARS);
+
     logger.info('llm_response', 'VLM description', {
-      length: description.length,
+      length: safeDescription.length,
       ms: llmMs,
     });
 
-    sendResponse({ description });
+    sendResponse({ description: safeDescription });
     sw.stop('done');
   } catch (e: unknown) {
     console.error('[background] VLM_REQUEST error:', e);
     logger.error('vlm', 'failure', {
       err: e instanceof Error ? e.message : String(e),
     });
+    // Surface a stripped error back to the content script — never leak
+    // the full exception string (it can contain Fireworks internal
+    // detail). The spoken fallback in ERRORS.AI_UNAVAILABLE is the
+    // single user-facing sentence we ship.
     try {
       sendResponse({ description: ERRORS.AI_UNAVAILABLE });
     } catch (sendErr) {
@@ -1079,12 +1124,26 @@ async function handleReadArticle(
   msg: Record<string, unknown>,
   sendResponse: (response?: unknown) => void,
 ): Promise<void> {
+  // Hard ceilings — picked so a single misbehaving extraction can't
+  // exhaust SW memory or stream dozens of minutes of speech back.
+  const MAX_PROSE_CHARS = 200_000;       // 200KB content; chunkForRead handles it
+  const MAX_CHUNK_CHARS = 4000;          // Bound any single TTS chunk
+  const MAX_CHUNK_COUNT = 80;            // Cap on streamed utterances
+  const MAX_SUMMARY_CHARS = 8000;        // Final spoken summary size
+
   const sw = new logger.Stopwatch('read_article', 'READ_ARTICLE round-trip');
   try {
-    const mode = (msg.mode as 'aloud' | 'summarize') ?? 'aloud';
-    const prose = ((msg.prose as string) ?? '').trim();
+    const rawMode = msg.mode;
+    const mode: 'aloud' | 'summarize' =
+      rawMode === 'summarize' ? 'summarize' : (rawMode === 'aloud' ? 'aloud' : 'aloud');
+    // Defensive prose cap — a runaway extractMainContent or a user
+    // triggering READ_ARTICLE on a 10MB page DOM gets a truncated-but-
+    // reasonable prose. Anything past 200KB is unlikely to be useful
+    // in TTS anyway. Tell the SW log so PC-QA can see it.
+    const rawProse = typeof msg.prose === 'string' ? msg.prose : '';
+    const prose = capText(rawProse.trim(), MAX_PROSE_CHARS);
 
-    if (!prose) {
+    if (!prose.trim()) {
       logger.warn('read_article', 'no prose', { mode });
       try {
         sendResponse({ error: 'No content to read or summarize.', mode });
@@ -1097,18 +1156,31 @@ async function handleReadArticle(
       return;
     }
 
+    if (rawProse.length > MAX_PROSE_CHARS) {
+      logger.warn('read_article', 'prose truncated to MAX_PROSE_CHARS', {
+        raw: rawProse.length,
+        capped: prose.length,
+      });
+    }
+
     // ── mode='aloud': chunk into TTS-sized utterances; lazy cleanup ──
     if (mode === 'aloud') {
-      const chunks = chunkForRead(prose, { locale: msg.lang as string | undefined });
+      const chunks = chunkForRead(prose, { locale: typeof msg.lang === 'string' ? msg.lang : undefined });
+      // Per-chunk size cap — chunkForRead already targets TTS-friendly
+      // sizes, but a chunk that contains a long URL list or unbroken
+      // string (image alt attributes, JS payload) can still exceed the
+      // cap. Slice with a marker so TTS doesn't emit half a URL.
+      const sizeCapped = chunks.map((c) => capText(c, MAX_CHUNK_CHARS));
+
       logger.info('read_article', 'aloud: chunking done', {
-        chunkCount: chunks.length,
+        chunkCount: sizeCapped.length,
       });
 
       const { diamond_api_key } = await chrome.storage.local.get('diamond_api_key');
       const hasKey = Boolean((diamond_api_key as string | undefined)?.trim());
 
       const { chunks: cleaned, cleanedFlags } = await cleanChunks(
-        chunks,
+        sizeCapped,
         hasKey,
         (c) => callLLMWithRetry(
           'You are a TTS-friendly text normalizer. Output rewritten text only — no commentary, no JSON. Keep the original meaning; expand symbols, replace jargon, decolonize numbers (e.g. 1,000 → one thousand).',
@@ -1116,12 +1188,21 @@ async function handleReadArticle(
         ),
       );
 
+      // Cap cleaned output per chunk too — cleanChunks returns text
+      // that may have grown during LLM normalization. Bound each one
+      // and the total count to MAX_CHUNK_COUNT so a single keystroke
+      // can't queue an hour of TTS.
+      const finalChunks = cleaned
+        .map((c) => capText(c, MAX_CHUNK_CHARS))
+        .slice(0, MAX_CHUNK_COUNT);
+      const finalFlags = cleanedFlags.slice(0, finalChunks.length);
+
       logger.info('read_article', 'aloud: ready to stream', {
-        chunks: cleaned.length,
-        cleanedCount: cleanedFlags.filter(Boolean).length,
+        chunks: finalChunks.length,
+        cleanedCount: finalFlags.filter(Boolean).length,
       });
       try {
-        sendResponse({ chunks: cleaned, cleanedFlags, mode: 'aloud' });
+        sendResponse({ chunks: finalChunks, cleanedFlags: finalFlags, mode: 'aloud' });
       } catch (sendErr) {
         logger.warn('read_article', 'sendResponse threw (channel closed)', {
           err: sendErr instanceof Error ? sendErr.message : String(sendErr),
@@ -1139,13 +1220,14 @@ async function handleReadArticle(
       const { diamond_model } = await chrome.storage.local.get('diamond_model');
       const model = (diamond_model as string | undefined) ?? '';
       try {
-        const summary = await summarizeChunks(
+        const rawSummary = await summarizeChunks(
           prose,
           model,
           async (systemPrompt, userMessage) => {
             return callLLMWithRetry(systemPrompt, userMessage);
           },
         );
+        const summary = capText(rawSummary, MAX_SUMMARY_CHARS);
         sendResponse({ summary, mode: 'summarize' });
       } catch (sendErr) {
         logger.warn('read_article', 'sendResponse threw (channel closed)', {

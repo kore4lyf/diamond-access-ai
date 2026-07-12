@@ -97,6 +97,38 @@ const DEFAULT_MAX_CHARS = 4000;
 /** Truncation depth threshold — keep these levels fully. */
 const KEEP_DEPTH = 3;
 
+/**
+ * Hard cap for text-node capture (chars). Bounds the LLM prompt so a
+ * single hostile page (e.g. a giant data-uri-style text node) cannot
+ * push the structure string past DEFAULT_MAX_CHARS all by itself.
+ */
+const MAX_TEXT_NODE_LENGTH = 500;
+
+/**
+ * Hard cap for captured element values (chars). Push-down form-fill
+ * confirmation flows pass `input.value`, so truncating here means the
+ * snapshot can't accidentally leak a 50KB buffer of pasted content
+ * through to the LLM.
+ */
+const MAX_VALUE_LENGTH = 500;
+
+/**
+ * Hard cap for accessible-name text (chars). Was 100, bumped to 200
+ * to keep long-but-meaningful button labels intact while still
+ * bounding growth.
+ */
+const MAX_ACCESSIBLE_NAME_LENGTH = 200;
+
+/** Hard cap for href / action URLs captured (chars). */
+const MAX_ATTRIBUTE_LENGTH = 2000;
+
+/**
+ * Hard cap on the number of ELEMENT_NODEs visited by the walker. A
+ * 10k-node SPA is realistic (e-commerce listings, news homepages);
+ * 50k is generous. Beyond this, the walker returns what it has so far.
+ */
+const MAX_NODES_VISITED = 50_000;
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -281,17 +313,30 @@ function getAccessibleName(el: Element, roleDisplay: string): string {
   }
 
   const text = el.textContent?.trim();
-  if (text) return text.length > 100 ? text.slice(0, 100) + '...' : text;
+  if (text) {
+    return text.length > MAX_ACCESSIBLE_NAME_LENGTH
+      ? text.slice(0, MAX_ACCESSIBLE_NAME_LENGTH) + '...'
+      : text;
+  }
 
   return '';
 }
 
-/** Get the current value for input/select/textarea elements. */
+/**
+ * Get the current value for input/select/textarea elements.
+ *
+ * PC-WALK-HARDEN: Truncated to MAX_VALUE_LENGTH so a single input with
+ * a megabyte of pasted text cannot dominate the snapshot's character
+ * budget.
+ */
 function getValue(el: Element): string {
   const tag = el.tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
     const input = el as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
-    return input.value ?? '';
+    const raw = input.value ?? '';
+    return raw.length > MAX_VALUE_LENGTH
+      ? raw.slice(0, MAX_VALUE_LENGTH) + '...'
+      : raw;
   }
   return '';
 }
@@ -350,21 +395,38 @@ export function nearestHeadingText(el: Element): string {
   return '';
 }
 
-/** Get the navigation target for links and forms. */
+/**
+ * Get the navigation target for links and forms.
+ *
+ * PC-WALK-HARDEN: Truncate href/form action URLs to MAX_ATTRIBUTE_LENGTH
+ * so an adversarial long query-string URL cannot blow up the snapshot.
+ */
 function getTarget(el: Element): string {
   const tag = el.tagName;
   if (tag === 'A') {
     const href = (el as HTMLAnchorElement).getAttribute('href');
     // Skip empty, fragment-only, and javascript: links
-    if (href && href !== '#' && !href.startsWith('javascript:')) return href;
+    if (href && href !== '#' && !href.startsWith('javascript:')) {
+      return href.length > MAX_ATTRIBUTE_LENGTH
+        ? href.slice(0, MAX_ATTRIBUTE_LENGTH) + '...'
+        : href;
+    }
   }
   if (tag === 'FORM') {
     const action = (el as HTMLFormElement).action;
-    if (action) return action;
+    if (action) {
+      return action.length > MAX_ATTRIBUTE_LENGTH
+        ? action.slice(0, MAX_ATTRIBUTE_LENGTH) + '...'
+        : action;
+    }
   }
   if (tag === 'AREA') {
     const href = el.getAttribute('href');
-    if (href) return href;
+    if (href) {
+      return href.length > MAX_ATTRIBUTE_LENGTH
+        ? href.slice(0, MAX_ATTRIBUTE_LENGTH) + '...'
+        : href;
+    }
   }
   return '';
 }
@@ -407,50 +469,151 @@ function formatElement(
 // ---------------------------------------------------------------------------
 
 /**
+ * Mutable shared counter passed through recursive walks so a single
+ * node-visit budget caps work even though recursion is split across
+ * `processElement` (light DOM) and `processShadowChildren` (shadow DOM).
+ */
+interface WalkBudget {
+  visited: number;
+  /** True once `visited` exceeds `MAX_NODES_VISITED`. */
+  exhausted: boolean;
+}
+
+/**
+ * Process one child node (element / text). Shared by light-DOM and
+ * shadow-DOM walks so the role-emptiness + truncation logic applies
+ * uniformly.
+ *
+ * PC-WALK-HARDEN: truncates text-node payloads to MAX_TEXT_NODE_LENGTH
+ * so a single runaway text node cannot dominate the budget.
+ */
+function processChild(node: Node, hasRole: boolean, depth: number, lines: LineEntry[]): void {
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    processElement(node as Element, depth, lines, { visited: 0, exhausted: false });
+    return;
+  }
+  if (node.nodeType === Node.TEXT_NODE) {
+    // Only emit text nodes for elements WITHOUT roles.
+    // Elements with roles already capture text content via accessible name.
+    if (hasRole) return;
+    const rawText = (node as Text).data ?? node.textContent ?? '';
+    const text = rawText.trim();
+    if (!text) return;
+    const truncated =
+      text.length > MAX_TEXT_NODE_LENGTH
+        ? text.slice(0, MAX_TEXT_NODE_LENGTH) + '...'
+        : text;
+    lines.push({
+      text: '  '.repeat(depth) + truncated,
+      depth,
+      role: 'text',
+    });
+  }
+  // Comment / CDATA / other: ignored by design. Script + style content
+  // are already filtered upstream by SKIP_TAGS so they cannot leak in
+  // even at elements without roles.
+}
+
+/**
  * Walk a single element node and collect its line entry + children.
  *
  * Nesting rule: non-role elements (div, span, label, p, etc.) act as
  * transparent wrappers — they do NOT add a nesting level. Their children
  * are processed at the same depth, so the output tree reflects real semantic
  * nesting, not HTML wrapper artifacts.
+ *
+ * PC-WALK-HARDEN: Three additions vs. the original walker:
+ *   1. Walks an OPEN shadow root on the host if present (closed shadow
+ *      roots are skipped — `element.shadowRoot` is null for them).
+ *   2. Respects a shared node-visit budget so SPAs with 10k+ nodes
+ *      terminate the walk instead of hanging the content script.
+ *   3. Each DOM read is wrapped so accessibility quirks or detached
+ *      nodes can never throw out of the walker.
  */
-function processElement(el: Element, depth: number, lines: LineEntry[]): void {
-  if (shouldSkipElement(el)) return;
-
-  const roleDisplay = getRoleDisplay(el);
-  const hasRole = roleDisplay !== '';
-
-  // Only emit a formatted line if the element has a semantic role
-  if (hasRole) {
-    const entry = formatElement(el, depth, roleDisplay);
-    if (entry) lines.push(entry);
+function processElement(el: Element, depth: number, lines: LineEntry[], budget: WalkBudget): void {
+  if (budget.exhausted) return;
+  budget.visited++;
+  if (budget.visited > MAX_NODES_VISITED) {
+    budget.exhausted = true;
+    return;
   }
 
-  // Non-role elements are transparent wrappers — children share their depth
+  let skipped = false;
+  try {
+    skipped = shouldSkipElement(el);
+  } catch {
+    return;
+  }
+  if (skipped) return;
+
+  let roleDisplay = '';
+  try {
+    roleDisplay = getRoleDisplay(el);
+  } catch {
+    return;
+  }
+  const hasRole = roleDisplay !== '';
+
+  if (hasRole) {
+    try {
+      const entry = formatElement(el, depth, roleDisplay);
+      if (entry) lines.push(entry);
+    } catch {
+      // Never let a bad element (custom / foreign-attribute) crash the walker.
+    }
+  }
+
   const childDepth = hasRole ? depth + 1 : depth;
 
-  // Walk child nodes
-  const children = el.childNodes;
+  let children: NodeListOf<ChildNode>;
+  try {
+    children = el.childNodes;
+  } catch {
+    return;
+  }
   for (let i = 0; i < children.length; i++) {
-    const child = children[i];
+    if (budget.exhausted) return;
+    processChild(children[i], hasRole, childDepth, lines);
+  }
 
-    if (child.nodeType === Node.ELEMENT_NODE) {
-      processElement(child as Element, childDepth, lines);
-    } else if (child.nodeType === Node.TEXT_NODE) {
-      // Only emit text nodes for elements WITHOUT roles.
-      // Elements with roles already capture text content via accessible name.
-      if (!hasRole) {
-        const rawText = child.textContent ?? '';
-        const text = rawText.trim();
-        if (text) {
-          lines.push({
-            text: '  '.repeat(childDepth) + text,
-            depth: childDepth,
-            role: 'text',
-          });
-        }
-      }
-    }
+  // Walk open shadow root (closed => element.shadowRoot === null).
+  processShadowChildren(el, hasRole, childDepth, lines, budget);
+}
+
+/**
+ * Walk the open shadow root attached to `el`, if any. Closed shadow
+ * roots expose no `shadowRoot` property so this is a no-op for them
+ * by spec. The outer try/catch handles older hosts / polyfills where
+ * the accessor itself throws.
+ *
+ * PC-WALK-HARDEN: Shadow DOM hosts (any framework using Web Components)
+ * now enumerate correctly. Pages whose entire interactive UI lives in a
+ * closed shadow root will not crash — they just contribute nothing,
+ * which is what `element.shadowRoot === null` would imply anyway.
+ */
+function processShadowChildren(
+  el: Element,
+  hasRole: boolean,
+  depth: number,
+  lines: LineEntry[],
+  budget: WalkBudget,
+): void {
+  let shadow: ShadowRoot | null;
+  try {
+    shadow = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+  } catch {
+    return;
+  }
+  if (!shadow) return;
+  let shadowChildren: NodeListOf<ChildNode>;
+  try {
+    shadowChildren = shadow.childNodes;
+  } catch {
+    return;
+  }
+  for (let i = 0; i < shadowChildren.length; i++) {
+    if (budget.exhausted) return;
+    processChild(shadowChildren[i], hasRole, depth, lines);
   }
 }
 
@@ -532,7 +695,7 @@ export function extractPageStructureFromRoot(
     const child = root.childNodes[i];
 
     if (child.nodeType === Node.ELEMENT_NODE) {
-      processElement(child as Element, 0, lines);
+      processElement(child as Element, 0, lines, { visited: 0, exhausted: false });
     } else if (child.nodeType === Node.TEXT_NODE) {
       const text = child.textContent?.trim();
       if (text) {

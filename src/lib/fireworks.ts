@@ -58,6 +58,15 @@ export const FIREWORKS_URL =
  */
 export const DEV_MODEL_ID = 'accounts/fireworks/models/minimax-m3';
 
+/**
+ * Hard ceiling on chars the model can hand back from any reply path
+ * (callLLMCore, callVLM). Picked so a TTS round of the result stays
+ * < 5 min even at slow cadence; legitimate long answers are untouched,
+ * pathological / runaway model output gets pruned with a marker so
+ * callers can detect truncation downstream.
+ */
+export const MAX_RESPONSE_CHARS = 16000;
+
 // ---------------------------------------------------------------------------
 // Model capability table — quiet guardrail so describe-image-style actions
 // never waste an API call against a text-only model.
@@ -289,9 +298,19 @@ export async function callLLMCore(
 
   if (!response.ok) {
     const body = await response.text();
+    // 429 rate limit is the most common transient failure — surface the
+    // status explicitly so the callLLMWithRetry-throwing-error path
+    // yields a recognizable marker in logs (existing tests use only the
+    // numeric-and-body shape, so this prefix is non-breaking).
+    if (response.status === 429) {
+      throw new Error(`Fireworks rate limit 429: ${body || 'too many requests'}`);
+    }
     throw new Error(`Fireworks API error ${response.status}: ${body}`);
   }
 
+  // Read JSON body. A CDN/upstream that returns an HTML error page
+  // with status 200 will throw here — caught by callLLMWithRetry
+  // as a generic fetch failure → retried, then ERRORS.AI_UNAVAILABLE.
   const data: unknown = await response.json();
   const content = extractContent(data);
 
@@ -299,7 +318,11 @@ export async function callLLMCore(
     throw new Error('Malformed Fireworks response');
   }
 
-  return content;
+  // Cap the model reply so an unexpectedly huge answer can't overflow
+  // the content script's prompt-context or TTS queue. The ceiling is
+  // intentionally generous (16k chars) — only pathological / runaway
+  // output is pruned; legitimate long answers are untouched.
+  return capText(content, MAX_RESPONSE_CHARS);
 }
 
 // ---------------------------------------------------------------------------
@@ -392,7 +415,7 @@ export async function callLLMWithRetry(
         // Two destinations: SW DevTools console + persistent storage buffer.
         await captureVerboseLLMBody(raw, systemPrompt, userMessage, attempt);
       }
-      const parsed = tryParseJSON(raw);
+      const parsed = safeJsonParse(raw);
 
       if (parsed) {
         // Valid JSON — return as stringified JSON for structured consumption
@@ -405,8 +428,11 @@ export async function callLLMWithRetry(
         continue;
       }
 
-      // Last attempt — return raw text as-is (spoken fallback)
-      return raw;
+      // Last attempt — cap and return raw text as-is (spoken fallback).
+      // The cap is a defense-in-depth measure: callLLMCore already caps
+      // content, but we cap once more on the raw path so a non-JSON
+      // prose reply can't overshoot the content script's prompt budget.
+      return capText(raw, MAX_RESPONSE_CHARS);
     } catch {
       if (attempt === retries) {
         throw new Error('Fireworks API call failed');
@@ -419,6 +445,168 @@ export async function callLLMWithRetry(
 
   // TypeScript exhaustiveness guard — should never reach here
   throw new Error('Fireworks API call failed');
+}
+
+// ---------------------------------------------------------------------------
+// Defensive parsing & sizing helpers — public so unit tests can hit them
+// directly and so any future caller (e.g. content.ts, options page) can
+// reuse the same defensive shape without copy-paste.
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip a single pair of markdown code fences wrapping the response.
+ * Handles ` ```json ... ` ``` and ` ``` ... ` ```.
+ * If no fences are present, returns the input trimmed unchanged.
+ *
+ * Intentionally minimal: one opening + one closing pair, no nested
+ * strip, no leading-prose strip. Prose-wrapped or multi-object JSON
+ * recovery lives in `safeJsonParse`.
+ */
+export function stripCodeFences(text: string): string {
+  if (typeof text !== 'string' || !text) return '';
+  const trimmed = text.trim();
+  const m = /^```(?:json|JSON)?\s*\n?([\s\S]*?)\n?\s*```$/.exec(trimmed);
+  return m ? m[1].trim() : trimmed;
+}
+
+/**
+ * Walk forward from the first `{` and find the matching closing brace
+ * using depth tracking that respects string literals and backslash
+ * escapes. Returns the parsed first complete top-level object, or
+ * null if no complete object is found (truncated, missing, malformed).
+ *
+ * Used by `safeJsonParse` when the model emits prose before/after
+ * its JSON, or concatenates multiple objects and we want only the
+ * first. Never throws; returns null on any parse failure.
+ */
+export function extractFirstJsonObject(text: string): object | null {
+  if (typeof text !== 'string' || !text) return null;
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+        continue;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') {
+      depth++;
+      continue;
+    }
+    if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        const candidate = text.slice(start, i + 1);
+        try {
+          return JSON.parse(candidate) as object;
+        } catch {
+          // Substring is not parseable — give up rather than throw.
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Defensive top-level JSON parse. Tries in order:
+ *   1. Strip fences, return JSON.parse if the result is a clean `{...}`.
+ *   2. Otherwise use extractFirstJsonObject to recover the first
+ *      complete object even when prose wraps it or multiple objects
+ *      are concatenated in the same response.
+ * Returns the parsed object, or null if neither path recovers one.
+ * Never throws.
+ *
+ * This is what `callLLMWithRetry` uses internally; the original
+ * (stricter, returns-null-on-non-`{`-prefix) `tryParseJSON` is kept
+ * exported and unchanged for callers that want the cheap suffix check.
+ */
+export function safeJsonParse(text: string): object | null {
+  if (typeof text !== 'string' || !text) return null;
+  const stripped = stripCodeFences(text);
+  if (!stripped) return null;
+
+  // Fast path — the response is already a clean object literal.
+  if (stripped.startsWith('{')) {
+    try {
+      return JSON.parse(stripped) as object;
+    } catch {
+      // Fall through to recover the first complete sub-object. The
+      // direct parse fails on truncation in the middle of the JSON
+      // body or on stray non-JSON characters inside braces.
+    }
+  }
+  return extractFirstJsonObject(stripped);
+}
+
+/**
+ * Bound a string to `maxChars` characters. If `maxChars <= 0` or the
+ * input is not a string, returns ''. If the input is shorter than
+ * `maxChars`, returns it unchanged. Otherwise truncates and appends
+ * a small marker so callers can detect truncation downstream.
+ *
+ * The marker counts toward `maxChars`, so callers see at most
+ * `maxChars` characters.
+ *
+ * Used to cap any model reply so a single oversized payload can't
+ * blow the content script's prompt-context budget or the TTS queue.
+ */
+export function capText(text: string, maxChars: number): string {
+  if (typeof text !== 'string') return '';
+  if (!Number.isFinite(maxChars) || maxChars <= 0) return '';
+  if (text.length <= maxChars) return text;
+  const marker = ' [truncated]';
+  const slice = Math.max(0, maxChars - marker.length);
+  return text.slice(0, slice) + marker;
+}
+
+/**
+ * Heuristic: did the model refuse the prompt with a safety /
+ * content-policy message rather than the structured JSON we asked
+ * for? Returns true when the response text contains a recognizable
+ * refusal marker (case-insensitive substring match).
+ *
+ * Read-only — we do NOT throw or rewrite the response. The caller
+ * decides whether to speak the refusal directly, reprompt, or log
+ * it. The purpose is to surface a refused request cleanly in the
+ * `llm_response` log stream so PC-QA can spot a refused request
+ * immediately without re-reading the body.
+ */
+export function isSafetyOrContentPolicyBlock(text: string): boolean {
+  if (typeof text !== 'string' || !text) return false;
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('i cannot') ||
+    lower.includes("i can't") ||
+    lower.includes('as an ai ') ||
+    lower.includes('as an ai\n') ||
+    lower.includes('i apologize') ||
+    lower.includes('against my guidelines') ||
+    lower.includes('content policy') ||
+    lower.includes('safety policy') ||
+    lower.includes('i am unable to')
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -506,6 +694,9 @@ const apiKey = result.diamond_api_key as string | undefined;
 
   if (!response.ok) {
     const body = await response.text();
+    if (response.status === 429) {
+      throw new Error(`Fireworks rate limit 429: ${body || 'too many requests'}`);
+    }
     throw new Error(`Fireworks API error ${response.status}: ${body}`);
   }
 
@@ -514,5 +705,8 @@ const apiKey = result.diamond_api_key as string | undefined;
   if (content === null) {
     throw new Error('Malformed Fireworks response');
   }
-  return content;
+  // Same cap as the text path — an unexpectedly huge vision description
+  // (or a model that hallucinates raw SVG/HTML) is bounded so the
+  // content script's TTS queue can't be flooded.
+  return capText(content, MAX_RESPONSE_CHARS);
 }

@@ -34,6 +34,7 @@ import {
 } from '../lib/actions';
 import { wrapIrreversible } from '../lib/safety-net';
 import { ERRORS } from '../lib/errors';
+import { installSPATracker } from '../lib/spa-tracker';
 import * as logger from '../lib/logger';
 
 // ---------------------------------------------------------------------------
@@ -167,6 +168,46 @@ export default defineContentScript({
       };
       document.addEventListener('visibilitychange', onVisible);
     }
+
+    // ----------------------------------------------------------------
+    // SPA navigation tracker (Phase K-CRITICAL)
+    //
+    // Most modern sites are SPAs: Twitter, Gmail, Instagram, GitHub,
+    // Reddit, news outlets. They mutate the URL with history.pushState
+    // / replaceState / hashchange instead of doing full reloads.
+    //
+    // PAGE_LOAD only fires on document_idle (one shot). After the user
+    // clicks a single in-app link, the URL changes but Diamond's page
+    // summary is now stale — they'd hear the FIRST page summary when
+    // asking for a fresh one, and every element index would point at
+    // the wrong place.
+    //
+    // Hook the three SPA navigation signals and fire PAGE_LOAD again
+    // on each, after an 800ms debounce so we don't spam summaries
+    // when sites pushState in tight loops (Twitter's infinite-scroll
+    // triggers pushState as the URL updates for new tweets).
+    // ----------------------------------------------------------------
+    installSPATracker({
+      onNavigate: (currentUrl, reason) => {
+        if (document.visibilityState !== 'visible') return;
+        logger.info('page_load', 'SPA navigation — re-summarizing', {
+          reason,
+          url: currentUrl,
+        });
+        const freshSnap = buildPageSnapshot();
+        chrome.runtime
+          .sendMessage({
+            type: 'PAGE_LOAD',
+            url: currentUrl,
+            structure: freshSnap.structure,
+          })
+          .then((response) => {
+            const resp = response as { summary?: string } | undefined;
+            if (resp?.summary) speak(resp.summary);
+          })
+          .catch(() => undefined);
+      },
+    });
 
     // Phase D/E/F: listen for `ACTIVATE` from the service worker
     // (triggered by chrome.commands.onCommand for Ctrl+Shift+D / Alt+Shift+D).
