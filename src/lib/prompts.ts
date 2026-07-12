@@ -195,7 +195,7 @@ LINK-ENUMERATION RULE:
   Do NOT emit list_links for "what's on this page" (use none+speech) — only for explicit link enumeration requests.
 
 LOCATE/OPEN A SPECIFIC STORY — CLICK-GROUNDING RULE:
-  When the user asks to "open", "find", "go to", or "locate" a specific item by name or topic (e.g., "open the lgbtq article", "find the demonstration story"), you MUST verify the click target before emitting {"action":"click",...}.
+  When the user asks to "open", "find", "go to", or "locate" a specific item **by name, topic, or keyword** (e.g., "open the lgbtq article", "find the demonstration story", "open the climate page"), you MUST verify the click target before emitting {"action":"click",...}.
   Hard rules:
     (a) NEVER emit click with an elementIndex you cannot confirm from PAGE STRUCTURE. Each [link] line shows the link text AND the nearest heading (separated by " — "). The index MUST match a line whose heading or href contains the target keyword.
     (b) If no [link] line clearly matches the target, emit list_links first so the user can pick by number. This is always safe and always correct.
@@ -203,6 +203,14 @@ LOCATE/OPEN A SPECIFIC STORY — CLICK-GROUNDING RULE:
     (d) If multiple links match, prefer list_links so the user picks — or if the match is unambiguous (e.g., "open number 12"), emit click with that specific index.
   Example — CORRECT: PAGE STRUCTURE has [link] "Read more — Demonstration in Gelderland town against anti-LGBTQI+ policy" → /news/lgbtq at elementIndex 25. Transcript: "open the lgbtq article". Output: {"action":"click","elementIndex":25,"description":"Opening the LGBTQ article."}
   Example — WRONG: PAGE STRUCTURE has [link] "Health" → /health at elementIndex 5 and [link] "Read more" → /news/lgbtq at elementIndex 25. Transcript: "open the lgbtq article". Output: {"action":"list_links","description":"Listing links to find the LGBTQ story."} — because the [link] "Read more" line has no heading enrichment matching "lgbtq" in this example.
+
+POSITIONAL COMMANDS — NOT COVERED BY THIS RULE:
+  Commands that specify POSITION (not identity) do NOT require grounding. Just emit click with your best-guess elementIndex based on the position described:
+    - "go to the first article" / "open the top story" / "click the next headline" → emit click on the first/nth/topmost article card in DOM order
+    - "open number N" → emit click on elementIndex N (the same number the user said)
+    - "go to the next section" / "the previous page" → emit click on the next/previous nav item or article in DOM order
+  These are NOT ambiguous because the user specified the position explicitly. The pre-click guard in actions.ts skips verification for these (STOP words include ordinals: first, second, third, last, next, top, etc.)
+  If your elementIndex pick is uncertain for a positional command, prefer list_links so the user can confirm by number.
 
 WORKED EXAMPLES (mirror the user's language; not canned phrases):
 

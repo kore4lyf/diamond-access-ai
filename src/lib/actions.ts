@@ -197,14 +197,40 @@ export function hasPendingConfirm(): boolean {
 /**
  * Extract intent keywords from an action description.
  * Filters out short/stop words, keeps alphanumeric tokens > 3 chars.
- * "Opening the LGBTQ article" → ["lgbtq", "article"]
+ * "Opening the LGBTQ article" → ["lgbtq"]
+ *
+ * Why STOP is large:
+ *   The pre-click guard catches the "open the lgbtq → opens Health" bug.
+ *   But it MUST NOT fire on positional commands like "go to the first
+ *   article", "open the top story", "open number 12" — those describe
+ *   position, not target identity, so keywords like "first", "top"
+ *   would never appear in any link's text/heading/href. Treating them
+ *   as stop words means the guard skips verification and trusts the
+ *   LLM's elementIndex (which is correct for position-based picks).
  */
 function extractIntentKeywords(description: string): string[] {
   const STOP = new Set([
+    // Articles / prepositions / conjunctions
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to',
-    'for', 'of', 'with', 'by', 'from', 'this', 'that', 'click',
-    'opening', 'clicking', 'tapping', 'pressing', 'link', 'button',
-    'element', 'page', 'item', 'number', 'here', 'there',
+    'for', 'of', 'with', 'by', 'from', 'this', 'that',
+    // Action verbs (-ing and base form) — describe what Diamond is doing
+    'click', 'opening', 'clicking', 'tapping', 'pressing',
+    'going', 'finding', 'selecting', 'choosing', 'loading',
+    'adding', 'filling', 'submitting', 'launching', 'activating',
+    // Generic page-element nouns — structural, not identifying
+    'link', 'links', 'button', 'element', 'page', 'item',
+    'number', 'here', 'there',
+    // Meta-nouns in news / commerce context — structural references
+    'headline', 'headlines', 'story', 'stories', 'article', 'articles',
+    'section', 'sections', 'menu', 'menus', 'option', 'options',
+    'category', 'categories', 'tab', 'tabs',
+    // Ordinal / positional adjectives — DO NOT identify a target
+    'first', 'second', 'third', 'fourth', 'fifth', 'sixth',
+    'seventh', 'eighth', 'ninth', 'tenth',
+    'last', 'next', 'previous',
+    // Positional / superlative
+    'top', 'bottom', 'main', 'primary', 'biggest', 'largest',
+    'latest', 'newest', 'oldest', 'current', 'middle',
   ]);
   const words = description
     .toLowerCase()

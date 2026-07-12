@@ -994,4 +994,79 @@ describe('clickAction keyword verification', () => {
     expect(out).not.toMatch(/couldn't find/i);
     expect(el.click).toHaveBeenCalled();
   });
+
+  // ── Positional commands (Demo: "go to the first article") ──────────────
+  // These describe position, not target identity. The guard must NOT fire
+  // because positional keywords ("first", "headline") won't ever appear
+  // in link text/heading/href. Skipping verification lets the LLM's
+  // position-based index selection proceed.
+
+  it('skips verification for "First headline" (positional)', () => {
+    const article = document.createElement('article');
+    const heading = document.createElement('h2');
+    heading.textContent = 'Climate summit in Amsterdam';
+    article.appendChild(heading);
+    const link = document.createElement('a');
+    link.href = '/news/climate';
+    link.textContent = 'Read more';
+    link.scrollIntoView = vi.fn();
+    vi.spyOn(link, 'click');
+    article.appendChild(link);
+
+    const snap = makeSnapshot([link]);
+    const out = clickAction(1, snap, 'First headline');
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(link.click).toHaveBeenCalled();
+  });
+
+  it('skips verification for "Opening the first article" (positional)', () => {
+    const link = document.createElement('a');
+    link.href = '/news/first';
+    link.textContent = 'Read more';
+    link.scrollIntoView = vi.fn();
+    vi.spyOn(link, 'click');
+    const snap = makeSnapshot([link]);
+    const out = clickAction(1, snap, 'Opening the first article');
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(link.click).toHaveBeenCalled();
+  });
+
+  it('skips verification for "Going to the top story" (positional + meta-noun)', () => {
+    const link = document.createElement('a');
+    link.href = '/news/top';
+    link.textContent = 'Read more';
+    link.scrollIntoView = vi.fn();
+    vi.spyOn(link, 'click');
+    const snap = makeSnapshot([link]);
+    const out = clickAction(1, snap, 'Going to the top story');
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(link.click).toHaveBeenCalled();
+  });
+
+  it('skips verification for "Opening link number 12" (ordinal + number)', () => {
+    const link = document.createElement('a');
+    link.href = '/news/12';
+    link.textContent = 'Read more';
+    link.scrollIntoView = vi.fn();
+    vi.spyOn(link, 'click');
+    const snap = makeSnapshot([link]);
+    const out = clickAction(1, snap, 'Opening link number 12');
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(link.click).toHaveBeenCalled();
+  });
+
+  // ── Identity commands still trigger verification ─────────────────────
+
+  it('verifies for "Opening the lgbtq modal" (identity noun)', () => {
+    const link = document.createElement('a');
+    link.href = '/news/health';
+    link.textContent = 'Read more';
+    link.scrollIntoView = vi.fn();
+    vi.spyOn(link, 'click');
+    const snap = makeSnapshot([link]);
+    // "lgbtq" appears nowhere on this link → verification must fire
+    const out = clickAction(1, snap, 'Opening the lgbtq modal');
+    expect(out).toMatch(/couldn't find/i);
+    expect(link.click).not.toHaveBeenCalled();
+  });
 });
