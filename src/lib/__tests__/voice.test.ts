@@ -186,6 +186,8 @@ describe('smoke', () => {
     expect(mod.startListening).toBeDefined();
     expect(mod.isListening).toBeDefined();
     expect(mod.resetSleepTimer).toBeDefined();
+    expect(mod.isSpeaking).toBeDefined();
+    expect(mod.stopSpeaking).toBeDefined();
   });
 });
 
@@ -557,5 +559,84 @@ describe('resetSleepTimer', () => {
     vi.advanceTimersByTime(59_000);
 
     expect(mod.isListening()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isSpeaking  (interrupt primitives — Alt+D talk-over + double-ESC stop)
+// ---------------------------------------------------------------------------
+
+describe('isSpeaking', () => {
+  it('is false initially', () => {
+    expect(mod.isSpeaking()).toBe(false);
+  });
+
+  it('is true while a speak() utterance is pending and false after onend', async () => {
+    const p = mod.speak('Hello');
+    expect(mod.isSpeaking()).toBe(true);
+
+    const utter = lastUtterance();
+    (utter?.onend as (() => void) | null)?.();
+
+    await expect(p).resolves.toBeUndefined();
+    expect(mod.isSpeaking()).toBe(false);
+  });
+
+  it('is false after onerror (does not stay stuck true)', async () => {
+    const p = mod.speak('Hello');
+    expect(mod.isSpeaking()).toBe(true);
+
+    const utter = lastUtterance();
+    (utter?.onerror as (() => void) | null)?.();
+
+    await expect(p).resolves.toBeUndefined();
+    expect(mod.isSpeaking()).toBe(false);
+  });
+
+  it('stays false when speechSynthesis is unavailable', async () => {
+    vi.stubGlobal('speechSynthesis', undefined);
+    vi.stubGlobal('SpeechSynthesisUtterance', undefined);
+
+    expect(mod.isSpeaking()).toBe(false);
+    await mod.speak('Hi'); // resolves immediately, never flips the flag
+    expect(mod.isSpeaking()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// stopSpeaking  (user-initiated interrupt primitive)
+// ---------------------------------------------------------------------------
+
+describe('stopSpeaking', () => {
+  it('calls speechSynthesis.cancel()', () => {
+    mod.stopSpeaking();
+    expect(vi.mocked(speechSynthesis.cancel)).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets isSpeaking to false while a speak is in flight', async () => {
+    const p = mod.speak('Hello');
+    expect(mod.isSpeaking()).toBe(true);
+
+    mod.stopSpeaking();
+
+    expect(mod.isSpeaking()).toBe(false);
+    expect(vi.mocked(speechSynthesis.cancel)).toHaveBeenCalled();
+
+    // Real Chrome fires onend after cancel(); settle the dangling promise.
+    const utter = lastUtterance();
+    (utter?.onend as (() => void) | null)?.();
+    await expect(p).resolves.toBeUndefined();
+  });
+
+  it('is idempotent — safe to call when already idle', () => {
+    expect(mod.isSpeaking()).toBe(false);
+    expect(() => mod.stopSpeaking()).not.toThrow();
+    expect(mod.isSpeaking()).toBe(false);
+    expect(vi.mocked(speechSynthesis.cancel)).toHaveBeenCalled();
+  });
+
+  it('does not throw when speechSynthesis is unavailable', () => {
+    vi.stubGlobal('speechSynthesis', undefined);
+    expect(() => mod.stopSpeaking()).not.toThrow();
   });
 });

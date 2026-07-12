@@ -14,6 +14,8 @@ import {
   speak,
   startListening,
   isListening,
+  isSpeaking,
+  stopSpeaking,
   resetSleepTimer,
   startHandsFree,
   stopHandsFree,
@@ -339,6 +341,37 @@ export default defineContentScript({
       },
       true, // capture phase
     );
+
+    // ── Double-ESC stop — interrupt Diamond's speech without starting
+    // a new listening session. User presses Alt+D to talk next.
+    //
+    // Same capture-phase pattern as Alt+D: form-field guard, !e.repeat,
+    // preventDefault + stopPropagation.
+    let lastEscTs = 0;
+    window.addEventListener(
+      'keydown',
+      (e: KeyboardEvent) => {
+        if (e.code !== 'Escape' || e.repeat) return;
+        const now = Date.now();
+        const target = e.target;
+        if (
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          target instanceof HTMLSelectElement ||
+          (target instanceof HTMLElement && target.isContentEditable)
+        ) {
+          return; // user is typing — don't interrupt
+        }
+        // Second ESC within 400ms while Diamond is speaking → stop speech
+        if (now - lastEscTs < 400 && (isSpeaking() || isReadingAloud)) {
+          isReadingAloud = false;
+          stopSpeaking();
+          logger.info('action', 'speech_stopped_via_double_esc');
+        }
+        lastEscTs = now;
+      },
+      true, // capture phase
+    );
   },
 });
 
@@ -379,17 +412,22 @@ export default defineContentScript({
  * `document.visibilityState === 'visible'`.
  */
 async function activateDiamond(): Promise<void> {
-  // HY3 plan / PC-STREAM: read-aloud mid-stream stop toggle.
-  // Re-pressing Alt+D while a read-aloud stream is in flight cancels
-  // the current TTS utterance + aborts the chunk queue. This is the
-  // user-visible half of "Press Alt+D to stop" spoken at stream start.
-  if (isReadingAloud) {
+  // ── Interrupt path: Alt+D while Diamond is speaking ──────────────────
+  // Either a normal TTS reply (isSpeaking) or a read-aloud stream
+  // (isReadingAloud) is in flight. Cancel immediately and start a fresh
+  // listening session so the user can give a new command without waiting.
+  //
+  // screen-reader caveat: cancel() wipes the shared speechSynthesis
+  // queue, silencing any concurrent screen-reader speech. This is the
+  // unavoidable cost of Chrome not providing a per-utterance cancel API.
+  // Consistent with the existing read-aloud stop (previously lines 388-389).
+  if (isSpeaking() || isReadingAloud) {
     isReadingAloud = false;
-    if (typeof window !== 'undefined' && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
-    logger.info('action', 'read_article_aloud_stopped_via_alt_d');
-    await speak('Stopped reading.');
+    stopSpeaking();
+    logger.info('action', 'speech_interrupted_via_alt_d');
+    // Jump straight into a fresh session — no "Stopped reading." blip
+    // so the user can talk immediately. Mode routing follows.
+    activateDiamondFresh();
     return;
   }
 
@@ -398,6 +436,15 @@ async function activateDiamond(): Promise<void> {
   // is a no-op (the loop is already hot) — only MODE_CHANGED can stop it.
   if (isListening() || isProcessing || isHandsFreeActive()) return;
 
+  activateDiamondFresh();
+}
+
+/**
+ * Core activation logic — mode routing + fresh session start.
+ * Split out from activateDiamond() so the interrupt path can skip
+ * the isSpeaking/isReadingAloud checks and go straight here.
+ */
+async function activateDiamondFresh(): Promise<void> {
   // Phase J: read persisted mode and dispatch.
   let mode: DiamondMode = 'command';
   try {

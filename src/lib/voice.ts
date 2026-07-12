@@ -18,12 +18,15 @@
  * Guardrails (hard rules):
  *   - No Fireworks import
  *   - No wake-word detection (stretch goal, parked)
- *   - No speechSynthesis.cancel() — shared queue with screen readers
  *   - No getUserMedia — browser handles mic prompt on recognition.start()
  *   - No new permissions (still ["activeTab","storage"])
  *   - Singleton AudioContext — do not create one per beep
  *   - isListening() guard prevents double-activation
  *   - Sleep timeout 60s — any voice activity resets it
+ *   - speechSynthesis.cancel() is ONLY used by stopSpeaking() for
+ *     user-initiated interrupts (Alt+D while speaking, double-ESC).
+ *     Annotated as intentional: cancels the shared TTS queue including
+ *     screen-reader speech — accepted trade-off for immediate stop.
  */
 
 import { ERRORS } from './errors';
@@ -67,6 +70,9 @@ let handsFreeStopwatch: logger.Stopwatch | null = null;
 
 /** Restart counter — guards against tight error-restart loops. */
 let handsFreeRestartCount = 0;
+
+/** True while speechSynthesis is speaking. Used by interrupt logic. */
+let speakingFlag = false;
 const HANDS_FREE_MAX_RESTARTS_WITHOUT_RESULT = 8;
 
 /**
@@ -147,9 +153,9 @@ export function playBeep(type: BeepType): void {
  *   2. lang === 'en-US'
  *   3. voices[0] (fallback)
  *
- * HARD RULE: Do NOT call speechSynthesis.cancel(). It shares the queue with
- * screen readers (NVDA/JAWS/VoiceOver). Just utter — let the queue sequence
- * naturally.
+ * NOTE: speechSynthesis.cancel() is intentionally used by stopSpeaking()
+ * for user-initiated interrupts (Alt+D / double-ESC while speaking).
+ * See stopSpeaking() JSDoc for the screen-reader caveat.
  */
 export function speak(text: string): Promise<void> {
   return new Promise((resolve) => {
@@ -193,12 +199,13 @@ export function speak(text: string): Promise<void> {
       utterance.voice = preferred;
     }
 
-    utterance.onend = () => resolve();
-    utterance.onerror = () => resolve(); // Don't block on TTS errors
+    utterance.onend = () => { speakingFlag = false; resolve(); };
+    utterance.onerror = () => { speakingFlag = false; resolve(); }; // Don't block on TTS errors
 
     // Chrome loads voices asynchronously; if none yet, speak() still works
     // with the system default voice. Do NOT set utterance.voice after speaking
     // as that can re-trigger Chrome's queue on some pages (BBC re-read bug).
+    speakingFlag = true;
     speechSynthesis.speak(utterance);
   });
 }
@@ -585,6 +592,28 @@ export function isHandsFreeActive(): boolean {
 /** True iff currently listening (guards double-activation on rapid Alt+D). */
 export function isListening(): boolean {
   return listeningFlag;
+}
+
+/** True iff speechSynthesis is currently speaking. */
+export function isSpeaking(): boolean {
+  return speakingFlag;
+}
+
+/**
+ * Immediately cancel any ongoing TTS speech and clear the speaking flag.
+ *
+ * INTENTIONAL cancel(): This is a user-initiated interrupt (Alt+D or
+ * double-ESC while Diamond is speaking). cancel() wipes the shared
+ * speechSynthesis queue, which also silences any concurrent screen-reader
+ * speech (NVDA/JAWS/VoiceOver). This is the unavoidable cost of Chrome
+ * not providing a per-utterance cancel API. Consistent with the existing
+ * read-aloud stop in activateDiamond (content.ts:388-389).
+ */
+export function stopSpeaking(): void {
+  if (typeof window !== 'undefined' && window.speechSynthesis) {
+    window.speechSynthesis.cancel();
+  }
+  speakingFlag = false;
 }
 
 // ---------------------------------------------------------------------------
