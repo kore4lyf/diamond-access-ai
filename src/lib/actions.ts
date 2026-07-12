@@ -20,7 +20,7 @@
 
 import { ERRORS } from './errors';
 import type { PageSnapshot } from './page-snapshot';
-import { enumerateImages, speakImageList } from './dom-walk';
+import { enumerateImages, speakImageList, enumerateLinks, speakLinkList } from './dom-walk';
 import * as logger from './logger';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +43,7 @@ export type DiamondAction =
   | { action: 'refresh'; description: string }
   | { action: 'describe_image'; elementIndex: number; description: string }
   | { action: 'list_images'; description: string }
+  | { action: 'list_links'; description: string }
   | { action: 'read_article'; description: string }
   | { action: 'summarize_article'; description: string };
 
@@ -126,6 +127,10 @@ export async function executeAction(
 
       case 'list_images':
         result = listImagesAction(action.description);
+        break;
+
+      case 'list_links':
+        result = listLinksAction(snapshot, action.description);
         break;
 
       case 'confirm':
@@ -777,6 +782,31 @@ export function listImagesAction(description: string): string {
   const images = enumerateImages(typeof document !== 'undefined' ? document.body : undefined);
   logger.info('action', 'list_images: enumerated', { count: images.length });
   const spoken = speakImageList(images);
+  return description ? `${description} ${spoken}` : spoken;
+}
+
+// ---------------------------------------------------------------------------
+// list_links — enumerate real <a href> links (deterministic, no LLM)
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk the snapshot's elements, find all <a href> tags, and return a
+ * spoken list of "Number N: text" entries. Numbers = real elementIndex
+ * in PAGE STRUCTURE so "open number N" maps directly to a click action.
+ *
+ * Pure function — no LLM, no chrome APIs, no mutation.
+ *
+ * @param snapshot   - The page snapshot whose elements are enumerated
+ * @param description - Optional LLM-provided preamble
+ * @returns Spoken string (list of numbered links)
+ */
+export function listLinksAction(
+  snapshot: { elements: HTMLElement[] },
+  description: string,
+): string {
+  const links = enumerateLinks(snapshot);
+  logger.info('action', 'list_links: enumerated', { count: links.length });
+  const spoken = speakLinkList(links);
   return description ? `${description} ${spoken}` : spoken;
 }
 

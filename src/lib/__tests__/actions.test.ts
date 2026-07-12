@@ -852,3 +852,63 @@ describe('listImagesAction', () => {
     expect(out).toMatch(/image 2.*Hero illustration/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// listLinksAction — Link enumeration feature (mirror listImagesAction)
+// ---------------------------------------------------------------------------
+
+describe('listLinksAction', () => {
+  function makeLink(text: string, href: string): HTMLAnchorElement {
+    const a = document.createElement('a');
+    a.href = href;
+    a.textContent = text;
+    return a;
+  }
+
+  it('reports no links when none are present', async () => {
+    const snap = makeSnapshot([]);
+    const out = await executeAction(
+      { action: 'list_links', description: '' },
+      snap,
+    );
+    expect(typeof out).toBe('string');
+    expect(out.toLowerCase()).toMatch(/no links/);
+  });
+
+  it('enumerates and indexes links in DOM order via snapshot', async () => {
+    const link1 = makeLink('England vs DR Congo', '/news/england');
+    const link2 = makeLink('Breaking News', '/news/breaking');
+    const snap = makeSnapshot([link1, link2]);
+    const out = await executeAction(
+      { action: 'list_links', description: '' },
+      snap,
+    );
+    expect(out).toMatch(/Number 1.*England/i);
+    expect(out).toMatch(/Number 2.*Breaking/i);
+  });
+
+  it('skips javascript: and # URLs automatically', async () => {
+    const valid = makeLink('Valid link', '/valid');
+    const js = makeLink('JS link', 'javascript:void(0)');
+    const frag = makeLink('Fragment', '#section');
+    const snap = makeSnapshot([valid, js, frag]);
+    const out = await executeAction(
+      { action: 'list_links', description: '' },
+      snap,
+    );
+    expect(out).toMatch(/Number 1.*Valid/i);
+    expect(out).not.toMatch(/Number 2/);
+    expect(out).not.toMatch(/Number 3/);
+  });
+
+  it('includes description prefix when provided', async () => {
+    const link = makeLink('News Link', '/news');
+    const snap = makeSnapshot([link]);
+    const out = await executeAction(
+      { action: 'list_links', description: 'Here are the stories' },
+      snap,
+    );
+    expect(out).toMatch(/^Here are the stories/);
+    expect(out).toMatch(/1 link/);
+  });
+});

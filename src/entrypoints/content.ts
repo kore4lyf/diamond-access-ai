@@ -853,6 +853,7 @@ function isValidAction(obj: Record<string, unknown>): boolean {
       );
 
     case 'list_images':
+    case 'list_links':
       return typeof obj.description === 'string';
 
     // HY3 plan / PC-STREAM: read-aloud + summarize-article own their

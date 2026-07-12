@@ -453,7 +453,7 @@ describe('implicit role mapping', () => {
 // Image enumeration (Phase J + Image-describe feature)
 // ---------------------------------------------------------------------------
 
-import { enumerateImages, speakImageList, MAX_IMAGES } from '../dom-walk';
+import { enumerateImages, speakImageList, MAX_IMAGES, enumerateLinks, speakLinkList } from '../dom-walk';
 
 describe('enumerateImages', () => {
   function makeImg(src: string, alt: string, w = 200, h = 100): HTMLElement {
@@ -550,5 +550,133 @@ describe('speakImageList', () => {
 
   it('exports MAX_IMAGES as a non-zero cap', () => {
     expect(MAX_IMAGES).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enumerateLinks — mirror enumerateImages, for list_links action
+// ---------------------------------------------------------------------------
+
+describe('enumerateLinks', () => {
+  // Build a snapshot-like object for enumerateLinks
+  function makeSnapshot(elements: HTMLElement[]): { elements: HTMLElement[] } {
+    return { elements };
+  }
+
+  it('returns empty array when no <a> elements exist', () => {
+    const root = fixture('<div>some text</div>');
+    const snapshot = makeSnapshot(Array.from(root.children) as HTMLElement[]);
+    expect(enumerateLinks(snapshot)).toEqual([]);
+  });
+
+  it('enumerates a single <a> with href and text content', () => {
+    const root = fixture('<a href="/news/england">England vs DR Congo</a>');
+    const snapshot = makeSnapshot(Array.from(root.children) as HTMLElement[]);
+    const out = enumerateLinks(snapshot);
+    expect(out.length).toBe(1);
+    expect(out[0].text).toBe('England vs DR Congo');
+    expect(out[0].href).toBe('/news/england');
+    // index should be 1-based (mirrors enumerateImages)
+    expect(out[0].index).toBe(1);
+  });
+
+  it('skips javascript: and # URLs', () => {
+    const root = fixture(`
+      <a href="javascript:void(0)">Fake link</a>
+      <a href="#">Empty fragment</a>
+      <a href="/real">Real link</a>
+    `);
+    const snapshot = makeSnapshot(Array.from(root.children) as HTMLElement[]);
+    const out = enumerateLinks(snapshot);
+    expect(out.length).toBe(1);
+    expect(out[0].href).toBe('/real');
+  });
+
+  it('skips aria-hidden links', () => {
+    const root = fixture(`
+      <a href="/hidden" aria-hidden="true">Hidden</a>
+      <a href="/visible">Visible</a>
+    `);
+    const snapshot = makeSnapshot(Array.from(root.children) as HTMLElement[]);
+    const out = enumerateLinks(snapshot);
+    expect(out.map((l) => l.href)).not.toContain('/hidden');
+    expect(out).toHaveLength(1);
+  });
+
+  it('deduplicates by href (same URL appears once)', () => {
+    const root = fixture(`
+      <a href="/same">First</a>
+      <a href="/other">Other</a>
+      <a href="/same">Duplicate</a>
+    `);
+    const snapshot = makeSnapshot(Array.from(root.children) as HTMLElement[]);
+    const out = enumerateLinks(snapshot);
+    const hrefs = out.map((h) => h.href);
+    expect(hrefs.filter((h) => h === '/same')).toHaveLength(1);
+  });
+
+  it('uses trimmed text content as label', () => {
+    const root = fixture('<a href="/news">  Extra whitespace here  </a>');
+    const snapshot = makeSnapshot(Array.from(root.children) as HTMLElement[]);
+    const out = enumerateLinks(snapshot);
+    expect(out[0].text).toBe('Extra whitespace here');
+  });
+
+  it('skips empty text-only links', () => {
+    const root = fixture('<a href="/empty"></a>');
+    const snapshot = makeSnapshot(Array.from(root.children) as HTMLElement[]);
+    const out = enumerateLinks(snapshot);
+    expect(out).toEqual([]);
+  });
+
+  it('respects maxLinks cap', () => {
+    const root = fixture('<div></div>');
+    const links: HTMLElement[] = [];
+    for (let i = 0; i < 5; i++) {
+      const a = document.createElement('a');
+      a.href = `/link${i}`;
+      a.textContent = `Link ${i}`;
+      root.appendChild(a);
+      links.push(a);
+    }
+    const snapshot = makeSnapshot(links);
+    // MAX_LINKS expected to be exported
+    expect(enumerateLinks(snapshot).length).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// speakLinkList — mirror speakImageList, for list_links action
+// ---------------------------------------------------------------------------
+
+describe('speakLinkList', () => {
+  function makeLinkEntry(text: string, index: number, href: string): { index: number; text: string; href: string } {
+    return { index, text, href };
+  }
+
+  it('returns "no links" line for empty input', () => {
+    expect(speakLinkList([])).toMatch(/no links/i);
+  });
+
+  it('lists links with index prefixes matching snapshot', () => {
+    const out = speakLinkList([
+      makeLinkEntry('England vs DR Congo', 12, '/news/england'),
+      makeLinkEntry('Breaking News', 15, '/news/breaking'),
+    ]);
+    // Numbers = the index user will say
+    expect(out).toMatch(/Number 12.*England vs DR Congo/i);
+    expect(out).toMatch(/Number 15.*Breaking News/i);
+  });
+
+  it('uses singular "link" for one entry', () => {
+    expect(speakLinkList([makeLinkEntry('Solo', 1, '/solo')])).toMatch(/1 link\b/);
+    expect(speakLinkList([makeLinkEntry('A', 1, '/a'), makeLinkEntry('B', 2, '/b')])).toMatch(/2 links\b/);
+  });
+
+  it('truncates long link text to speech-friendly length', () => {
+    const longText = 'This is an extremely long headline that would be hard to speak in one breath and should be truncated';
+    const out = speakLinkList([makeLinkEntry(longText, 1, '/long')]);
+    expect(out.length).toBeLessThan(longText.length + 50);
+    expect(out).toMatch(/Number 1/);
   });
 });

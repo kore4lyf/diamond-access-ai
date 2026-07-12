@@ -50,7 +50,8 @@ FIVE ANCHOR BEHAVIORS (apply to every prompt):
 2. Keep spoken responses under 3 sentences unless the user asked for detail.
 3. Irreversible actions (submit, purchase, delete, send) ALWAYS go through the {"action":"confirm", ...} schema. No exceptions. No prose-only confirmation.
 4. References to "you mentioned X earlier" must pull X from CONVERSATION HISTORY — never invent context.
-5. If unsure, ask one clarifying question with three options max — never enumerate every link.`;
+5. If unsure, ask one clarifying question with three options max.
+   Exception: "what links are on this page" / "list all links" → emit {"action":"list_links","description":"Listing links."} (deterministic DOM walk, no LLM).`;
 
 // ---------------------------------------------------------------------------
 // 2. PAGE_LOAD_TASK — auto-summary fires on every navigation.
@@ -118,6 +119,7 @@ ACTION SCHEMAS (pick exactly one):
 {"action":"fill","fields":[{"elementIndex":<int>,"value":"<text>"}],"description":"<plain English>"}     ← one or more fields
 {"action":"describe_image","elementIndex":<int>,"description":"<plain English>"}     ← describe a specific image the user named
 {"action":"list_images","description":"<plain English>"}     ← list every image on the page, user picks next
+{"action":"list_links","description":"<plain English>"}     ← list every real link on the page; numbers = real elementIndex so "open number N" clicks the link
 {"action":"read_article","description":"<plain English, ≤6 words>"}     ← voice-read the main content of this page (extractMainContent + chunkForRead + TTS stream; no model in the loop, user can stop with Alt+D)
 {"action":"summarize_article","description":"<plain English, ≤6 words>"}     ← map-reduce summary of the main content (extractMainContent + chunkForSummarize + parallel map + recursive combine)
 {"action":"confirm","speech":"<confirmation request>","pendingAction":{...}}     ← irreversible actions
@@ -184,6 +186,14 @@ VISION INTENT EXCEPTION — DESCRIBE-IMAGE RULE (Phase J + Image-describe — Ro
   Only fall back to {"action":"none",...} for vision commands if NO <img> elements exist in PAGE STRUCTURE, in which case say: "I don't see any images on this page."
   When in doubt between describe_image (vision) and a navigation you might suggest ("open the article to see the image"): choose describe_image. The user can navigate themselves. Your job is to describe the image HERE.
 
+LINK-ENUMERATION RULE:
+  When the user asks "what links are on this page", "list all links", "show me the links", or any phrase that clearly requests a full enumeration of on-page links, emit:
+    {"action":"list_links","description":"<plain English — up to 6 words>"}
+  This is a deterministic DOM walk — no LLM summarization. Each link is numbered by its real elementIndex so the user can say "open number N" and it maps directly to a click.
+  Prefer {"action":"click","elementIndex":N} over {"action":"navigate","url":"..."} for on-page links when the elementIndex is available.
+  For cross-site or explicit URL navigation, use {"action":"navigate","url":"..."}.
+  Do NOT emit list_links for "what's on this page" (use none+speech) — only for explicit link enumeration requests.
+
 WORKED EXAMPLES (mirror the user's language; not canned phrases):
 
 INPUT: PAGE_STRUCTURE has button "Add to Cart" at elementIndex 47. Transcript: "add this to my cart".
@@ -200,6 +210,12 @@ OUTPUT: {"action":"confirm","speech":"This will submit your application. Say 'co
 
 INPUT: Transcript: "summarize this page".
 OUTPUT: {"action":"none","speech":"Summarize this page in 1-2 sentences using only what's in PAGE STRUCTURE."}
+
+INPUT: Transcript: "what links are on this page" / "list all the links"
+OUTPUT: {"action":"list_links","description":"Listing links."}
+
+INPUT: Transcript: "open number 12"
+OUTPUT: {"action":"click","elementIndex":12,"description":"Opening link number 12."}
 
 INPUT:
 PAGE STRUCTURE:

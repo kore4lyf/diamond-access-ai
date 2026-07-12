@@ -632,3 +632,106 @@ function truncateSpoken(s: string, max: number): string {
   return s.slice(0, Math.max(0, max - 1)).trimEnd();
 }
 
+// ---------------------------------------------------------------------------
+// Link enumeration (list-links feature)
+//
+// Mirrors enumerateImages/speakImageList. Walks the snapshot's elements
+// array to find <a> elements with valid hrefs, preserving each link's
+// real index so "open number N" maps directly to a click action.
+//
+// Dedup by href — news sites repeat the same story link in hero, list,
+// and footer. The user hears each link once; the index points to
+// the first occurrence in DOM order.
+// ---------------------------------------------------------------------------
+
+export interface LinkEntry {
+  /** 1-based index in the page snapshot. Maps directly to the
+   *  integer in PAGE STRUCTURE so "open number N" clicks the right link. */
+  index: number;
+  /** Visible text or aria-label of the link. Truncated for speech. */
+  text: string;
+  /** Resolved href value. */
+  href: string;
+}
+
+/** Hard cap for link enumeration. Same rationale as MAX_IMAGES — spoken
+ *  list must fit in ~2 breaths for a blind user. */
+export const MAX_LINKS = 30;
+
+/**
+ * Enumerate every `<a href>` from a snapshot or a root DOM element,
+ * preserving each link's real index so "open number N" maps
+ * directly to a click action. Deduplicates by href, skips
+ * fragment-only / javascript: / empty-href links, and links with no
+ * meaningful visible text.
+ *
+ * Pure function — no DOM mutation, no IO.
+ *
+ * @param snapshotOrRoot - A snapshot `{ elements }` OR an HTMLElement (root)
+ * @param maxLinks - Max entries to return (default MAX_LINKS)
+ * @returns Array of LinkEntry, in DOM order, capped at maxLinks
+ */
+export function enumerateLinks(
+  snapshotOrRoot: { elements: HTMLElement[] } | HTMLElement,
+  maxLinks: number = MAX_LINKS,
+): LinkEntry[] {
+  // Support both snapshot and root DOM element (root uses snapshot-like wrapper)
+  const elements: HTMLElement[] =
+    'elements' in snapshotOrRoot
+      ? snapshotOrRoot.elements
+      : Array.from((snapshotOrRoot as HTMLElement).querySelectorAll('*')) as HTMLElement[];
+
+  const seen = new Set<string>();
+  const out: LinkEntry[] = [];
+  const cap = Math.max(0, maxLinks);
+
+  for (let i = 0; i < elements.length && out.length < cap; i++) {
+    const el = elements[i];
+    if (!el || el.tagName !== 'A') continue;
+
+    const href = (el as HTMLAnchorElement).getAttribute('href') ?? '';
+    // Skip empty, fragment-only, and javascript: links
+    if (!href || href === '#' || href.startsWith('#') || href.startsWith('javascript:')) continue;
+
+    // Skip hidden links
+    try {
+      if (el.matches('[aria-hidden="true"], [hidden], [inert]')) continue;
+    } catch { /* ignore invalid selectors */ }
+
+    // Dedup by href
+    const canon = href.trim().toLowerCase();
+    if (seen.has(canon)) continue;
+    seen.add(canon);
+
+    // Get meaningful text: aria-label > textContent
+    const ariaLabel = el.getAttribute('aria-label')?.trim() ?? '';
+    const rawText = el.textContent?.trim() ?? '';
+    const text = ariaLabel || rawText;
+    if (!text) continue;
+
+    out.push({ index: i + 1, text, href });
+  }
+  return out;
+}
+
+/**
+ * Format an array of LinkEntry into a single spoken string.
+ * Each entry is prefixed with "link N:" so the user can say
+ * "open number N" to click the real on-page link.
+ *
+ * @param entries - LinkEntry[] (max MAX_LINKS, truncate at boundary)
+ * @returns Spoken list, or a single "no links" line
+ */
+export function speakLinkList(entries: LinkEntry[]): string {
+  if (entries.length === 0) return 'This page has no links.';
+  const visible = entries.slice(0, MAX_LINKS);
+  const parts = visible.map(
+    (e) => `Number ${e.index}: ${truncateSpoken(e.text, 80)}`,
+  );
+  const headline =
+    visible.length === entries.length
+      ? `This page has ${entries.length} link${entries.length === 1 ? '' : 's'}.`
+      : `This page has at least ${entries.length} links.`;
+  return `${headline} ${parts.join('. ')}.`;
+}
+
