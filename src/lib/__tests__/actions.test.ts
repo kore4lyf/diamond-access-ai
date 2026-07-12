@@ -1210,3 +1210,102 @@ describe('clickAction nav-region guard', () => {
     expect(spyContent).toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Commerce / Amazon-shaped scenario tests
+// (Demo: "find me the cheapest laptop stand under $30" / "add the cheapest to cart")
+// ---------------------------------------------------------------------------
+
+describe('commerce click flow', () => {
+  // Amazon-shaped fixture: 3 product cards. Each has an h2 heading, link to product,
+  // text node for price, and Add to Cart button.
+  function makeAmazonCardFixture(
+    products: Array<{ name: string; priceText: string }>,
+  ): { snapshot: PageSnapshot; buttons: HTMLButtonElement[] } {
+    const buttons: HTMLButtonElement[] = [];
+    const elements: HTMLElement[] = [];
+
+    products.forEach((p) => {
+      const card = document.createElement('div');
+      card.setAttribute('data-component-type', 's-search-result');
+      const h2 = document.createElement('h2');
+      h2.textContent = p.name;
+      card.appendChild(h2);
+      const link = document.createElement('a');
+      link.href = `/dp/${p.name.replace(/\s+/g, '-').toLowerCase()}`;
+      link.textContent = 'See details';
+      link.scrollIntoView = vi.fn();
+      vi.spyOn(link, 'click');
+      card.appendChild(link);
+      // Price as text node (treelike rendering)
+      const price = document.createTextNode(p.priceText);
+      card.appendChild(price);
+      // Add to Cart button
+      const btn = document.createElement('button');
+      btn.name = 'submit.addToCart';
+      btn.textContent = 'Add to Cart';
+      btn.scrollIntoView = vi.fn();
+      vi.spyOn(btn, 'click');
+      card.appendChild(btn);
+      document.body.appendChild(card);
+      // Snapshot indexes: link is interactive [N], heading is not, button is interactive [N+1]
+      elements.push(link);
+      elements.push(btn);
+      buttons.push(btn);
+    });
+
+    return { snapshot: makeSnapshot(elements), buttons };
+  }
+
+  // ── Step 3: "add the cheapest to cart" — LLM picks correct button ─────
+
+  it('click on Add-to-Cart for cheapest product passes verification', () => {
+    const { snapshot, buttons } = makeAmazonCardFixture([
+      { name: 'Premium Laptop Stand', priceText: '$14.99' },
+      { name: 'Basic Laptop Stand', priceText: '$19.99' },
+      { name: 'Pro Aluminum Stand', priceText: '$24.99' },
+    ]);
+    // Amazon card 1 buttons in snapshot order:
+    // [1] See details link, [2] Add to Cart btn, [3] See details link 2, [4] Add to Cart btn 2, ...
+    // The cheapest (Premium, $14.99) is the FIRST product. Its Add to Cart is at [2].
+    const out = clickAction(2, snapshot, 'Adding Premium Laptop Stand to cart');
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(buttons[0].click).toHaveBeenCalled();
+  });
+
+  it('click on Add-to-Cart with goal-language "cheapest" still passes', () => {
+    const { snapshot, buttons } = makeAmazonCardFixture([
+      { name: 'Premium Laptop Stand', priceText: '$14.99' },
+    ]);
+    // Realistic LLM output: "Adding the cheapest Premium Laptop Stand to cart"
+    // "cheapest" is goal-language — guard should NOT reject the click.
+    const out = clickAction(2, snapshot, 'Adding the cheapest Premium Laptop Stand to cart');
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(buttons[0].click).toHaveBeenCalled();
+  });
+
+  it('click on Add-to-Cart in middle card picks correct button', () => {
+    const { snapshot, buttons } = makeAmazonCardFixture([
+      { name: 'Expensive Stand', priceText: '$45.00' },
+      { name: 'Cheap Basic Stand', priceText: '$12.99' },
+      { name: 'Mid-range Stand', priceText: '$22.00' },
+    ]);
+    // Cheapest is card 2 (index [3] link, [4] Add to Cart)
+    const out = clickAction(4, snapshot, 'Adding Cheap Basic Stand to cart');
+    expect(out).not.toMatch(/couldn't find/i);
+    expect(buttons[1].click).toHaveBeenCalled();
+    expect(buttons[0].click).not.toHaveBeenCalled();
+  });
+
+  it('click on Add-to-Cart does NOT trigger nav-region re-target', () => {
+    // Sanity: Add-to-Cart button is inside product card, NOT nav.
+    // Verify that clicking it directly works.
+    const { snapshot, buttons } = makeAmazonCardFixture([
+      { name: 'Premium Stand', priceText: '$14.99' },
+      { name: 'Basic Stand', priceText: '$19.99' },
+    ]);
+    const out = clickAction(2, snapshot, 'Adding Premium Stand to cart');
+    expect(buttons[0].click).toHaveBeenCalled();
+    expect(out).not.toMatch(/couldn't find/i);
+  });
+});

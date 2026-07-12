@@ -242,8 +242,25 @@ function extractIntentKeywords(description: string): string[] {
 
 /**
  * Check whether an element's visible text, aria-label, heading, or href
- * contains all the intent keywords. Used to verify the click target
+ * contains at least one intent keyword. Used to verify the click target
  * before navigating.
+ *
+ * Lenient match (some-not-every): LLM descriptions are noisy. They mix
+ * action verbs (handled by STOP), goal-language ("cheapest", "best deal"),
+ * and target identifiers ("Premium Laptop Stand"). Requiring every keyword
+ * to match would wrongly reject correct clicks when goal-language leaks
+ * into the description. We pass if ANY non-STOP keyword matches — that
+ * still catches the original "open lgbtq → resolves to unrelated element"
+ * case because that element's haystack has none of the identifier
+ * keywords (lgbtq/marriage/lgbt).
+ *
+ *   example PASS: description "Adding the cheapest Premium Laptop Stand to
+ *     cart", keywords = ["cheapest","premium","laptop","stand","cart"],
+ *     Add to Cart button hay = "add to cart premium laptop stand" → "cart"
+ *     matches. OK, accept.
+ *   example FAIL: description "Opening the lgbtq article", keywords =
+ *     ["lgbtq"], wrong link hay = "trump news" → no match. OK, re-target
+ *     or ask.
  */
 function elementMatchesKeywords(
   el: HTMLElement,
@@ -258,7 +275,7 @@ function elementMatchesKeywords(
     el.getAttribute('title')?.toLowerCase() ?? '',
     heading,
   ].join(' ');
-  return keywords.every((kw) => hay.includes(kw));
+  return keywords.some((kw) => hay.includes(kw));
 }
 
 /**
