@@ -432,6 +432,45 @@ function getTarget(el: Element): string {
 }
 
 /**
+ * Get form-element metadata for inputs/buttons/selects/textareas.
+ * Returns a compact string like `name="q" type="search" placeholder="Search..."`.
+ * Empty string for non-form elements.
+ */
+function getFormMetadata(el: Element): string {
+  const tag = el.tagName;
+  if (tag !== 'INPUT' && tag !== 'BUTTON' && tag !== 'SELECT' && tag !== 'TEXTAREA') {
+    return '';
+  }
+
+  const parts: string[] = [];
+
+  const input = el as HTMLInputElement;
+  const name = input.name;
+  if (name) parts.push(`name="${name}"`);
+
+  const type = input.type;
+  // Only include type when it adds info beyond the roleDisplay
+  if (type && type !== 'text' && type !== 'submit' && type !== 'button') {
+    parts.push(`type="${type}"`);
+  }
+
+  const placeholder = input.placeholder;
+  if (placeholder) {
+    const truncated = placeholder.length > 80
+      ? placeholder.slice(0, 80) + '...'
+      : placeholder;
+    parts.push(`placeholder="${truncated}"`);
+  }
+
+  const autocomplete = input.autocomplete;
+  if (autocomplete && autocomplete !== 'off' && autocomplete !== 'on') {
+    parts.push(`autocomplete="${autocomplete}"`);
+  }
+
+  return parts.join(' ');
+}
+
+/**
  * Format one role-bearing element into a line entry.
  * Called only for elements with a semantic role (hasRole === true).
  */
@@ -444,6 +483,7 @@ function formatElement(
   const value = getValue(el);
   const states = getStates(el);
   const target = getTarget(el);
+  const formMeta = getFormMetadata(el);
 
   // Enrich link text with nearest preceding heading so "Read more" becomes
   // identifiable: [link] "Read more — LGBTQ article headline" → /url
@@ -454,9 +494,10 @@ function formatElement(
     }
   }
 
-  // Format: [role] "name" [| value="..."] [| states] [ → target]
+  // Format: [role] "name" [form-meta] [| value="..."] [| states] [ → target]
   const indent = '  '.repeat(depth);
   let line = `${indent}[${roleDisplay}] "${name}"`;
+  if (formMeta) line += ` ${formMeta}`;
   if (value) line += ` | value="${value}"`;
   if (states) line += ` | ${states}`;
   if (target) line += ` → ${target}`;

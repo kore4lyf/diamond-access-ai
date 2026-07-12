@@ -30,8 +30,14 @@ import {
   executeAction,
   checkConfirmation,
   hasPendingConfirm,
+  hasPendingLinkSelect,
+  setPendingLinkSelect,
+  resolvePendingLinkSelect,
+  navigateAction,
   type DiamondAction,
 } from '../lib/actions';
+import { enumerateLinks, type LinkEntry } from '../lib/dom-walk';
+import type { LinkSelectResult } from '../lib/link-select';
 import { wrapIrreversible } from '../lib/safety-net';
 import { ERRORS } from '../lib/errors';
 import { installSPATracker } from '../lib/spa-tracker';
@@ -597,6 +603,20 @@ async function activateCommandMode(): Promise<void> {
     }
   }
 
+  // ── Phase K: pending link-select resolution ───────────────────────────
+  if (hasPendingLinkSelect()) {
+    const resolved = resolvePendingLinkSelect(transcript);
+    if (resolved.resolved && resolved.entry?.href) {
+      logger.info('link_select', 'collision resolved', { href: resolved.entry.href });
+      isProcessing = false;
+      tEnd('diamond-command');
+      const navResult = navigateAction(resolved.entry.href);
+      if (navResult) await speak(navResult);
+      return;
+    }
+    // Not a resolution — fall through
+  }
+
   // ── Normal command flow ────────────────────────────────────────────────
   isProcessing = true;
   try {
@@ -787,6 +807,18 @@ async function processHandsFreeUtterance(transcriptRaw: string): Promise<void> {
     }
   }
 
+  // ── Phase K: pending link-select resolution ───────────────────────────
+  if (hasPendingLinkSelect()) {
+    const resolved = resolvePendingLinkSelect(transcript);
+    if (resolved.resolved && resolved.entry?.href) {
+      logger.info('link_select', 'collision resolved', { href: resolved.entry.href });
+      const navResult = navigateAction(resolved.entry.href);
+      if (navResult) await speak(navResult);
+      return;
+    }
+    // Not a resolution or cancellation → fall through to normal flow
+  }
+
   // ── Standard command path ──────────────────────────────────────────
   const stopProcessing = new logger.Stopwatch('command', 'hands-free utterance');
   try {
@@ -901,6 +933,15 @@ async function handleResponse(
     return;
   }
 
+  // ── Phase K: link selection by description ───────────────────────────
+  // The LLM cannot reliably pick an elementIndex for semantic link requests
+  // ("open the privacy policy", "the article about layoffs"), so we
+  // delegate to a second LLM call with the full link list.
+  if (action.action === 'link_select') {
+    await handleLinkSelect(action.description as string, snapshot);
+    return;
+  }
+
   // ── Phase H: Safety net — check for irreversible actions ──────────────
   // Phase J (PC-QS-1): also pass the resolved DOM element so safety-net
   // can run form-context exemption (search/filter/login submits skip
@@ -924,6 +965,59 @@ async function handleResponse(
       err: e instanceof Error ? e.message : String(e),
     });
     await speak(ERRORS.SOMETHING_WRONG);
+  }
+}
+
+/**
+ * Phase K: Handle link selection by description.
+ *
+ * Called when the LLM returns a `link_select` action. Gathers links from
+ * the page, sends them + the description to the service worker for LLM
+ * resolution, then navigates or speaks a collision message.
+ */
+async function handleLinkSelect(
+  description: string,
+  snapshot: import('../lib/page-snapshot').PageSnapshot,
+): Promise<void> {
+  const links = enumerateLinks(snapshot);
+  if (links.length === 0) {
+    await speak('This page has no links.');
+    return;
+  }
+
+  let resp: unknown;
+  try {
+    resp = await chrome.runtime.sendMessage({
+      type: 'LINK_SELECT',
+      transcript: description,
+      links,
+    });
+  } catch {
+    await speak(ERRORS.AI_UNAVAILABLE);
+    return;
+  }
+
+  const result = resp as LinkSelectResult | null;
+  if (!result || result.action === 'none') {
+    const fallbackSpeech = result?.speech ?? ERRORS.LINK_NOT_FOUND ?? 'I could not find that link.';
+    await speak(fallbackSpeech);
+    return;
+  }
+
+  if (result.action === 'navigate' && result.url) {
+    const navResult = navigateAction(result.url);
+    if (navResult) await speak(navResult); // error message
+    return;
+  }
+
+  if (result.action === 'collision' && Array.isArray(result.candidates) && result.candidates.length > 0) {
+    const candText = result.candidates
+      .map((c, i) => `${i + 1}) ${c.text}`)
+      .join('. ');
+    const message = result.message ?? 'Several links match.';
+    await speak(`${message} ${candText}. Which one?`);
+    setPendingLinkSelect(result.candidates);
+    return;
   }
 }
 
@@ -997,6 +1091,10 @@ function isValidAction(obj: Record<string, unknown>): boolean {
     case 'back':
     case 'forward':
     case 'refresh':
+      return typeof obj.description === 'string';
+
+    // ── Phase K: link selection by description ───────────────────────────
+    case 'link_select':
       return typeof obj.description === 'string';
 
     default:
@@ -1076,7 +1174,7 @@ async function readArticleAloud(description: string): Promise<void> {
   }
 
   let response:
-    | { chunks?: string[]; cleanedFlags?: boolean[]; error?: string }
+    | { chunks?: string[]; cleanedFlags?: boolean[]; noKeyCount?: number; error?: string }
     | undefined;
   try {
     response = (await chrome.runtime.sendMessage({
@@ -1125,10 +1223,17 @@ async function readArticleAloud(description: string): Promise<void> {
   }
 
   // Announce end-of-article (every time). Append cleanup detail only if needed.
-  const rawCount = response.cleanedFlags?.filter((c) => !c).length ?? 0;
+  const cleanedCount = response.cleanedFlags?.filter((c) => !c).length ?? 0;
+  const noKeyCount = response.noKeyCount ?? 0;
+  const rawCount = (response.cleanedFlags?.length ?? 0) - cleanedCount;
+  const failedCount = rawCount - noKeyCount;
+  const parts: string[] = [];
+  if (cleanedCount > 0) parts.push(`${cleanedCount} part${cleanedCount === 1 ? '' : 's'} cleaned`);
+  if (noKeyCount > 0) parts.push(`${noKeyCount} part${noKeyCount === 1 ? '' : 's'} kept raw (no API key)`);
+  if (failedCount > 0) parts.push(`${failedCount} part${failedCount === 1 ? '' : 's'} kept raw (cleanup failed)`);
   const finishedMsg =
-    rawCount > 0
-      ? `Finished reading. I had to keep ${rawCount} part${rawCount === 1 ? '' : 's'} raw because cleanup failed.`
+    parts.length > 0
+      ? `Finished reading. ${parts.join(', ')}.`
       : 'Finished reading.';
   await speak(finishedMsg);
 }

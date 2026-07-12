@@ -4,85 +4,79 @@ import { needsModelCleanup } from '../content-chunker';
 
 describe('read-aloud-cleanup', () => {
   describe('cleanChunks', () => {
-    it('flags not-needed chunks as true (regression: original bug)', async () => {
-      // This is the core regression: when no key, flagged chunks MUST still get true.
-      const flagged = 'Price is £2.'; // needsModelCleanup false now (bare unit dropped, but imagine it was flagged)
-      // Actually test with a truly flagged chunk
-      const trulyFlagged = '• bullet point text';
-      expect(needsModelCleanup(trulyFlagged)).toBe(true);
+    // Flag semantics: false = cleaned (LLM modified), true = raw (skipped or failed)
 
-      const result = await cleanChunks([trulyFlagged], false, async () => 'cleaned');
-      expect(result.cleanedFlags[0]).toBe(true);
-      expect(result.chunks[0]).toBe(trulyFlagged); // raw kept (no key)
-    });
-
-    it('flags everything true when no key even for flagged chunks', async () => {
-      const chunks = ['• one', '• two', '• three', 'degrees Celsius'];
+    it('no key: all chunks kept raw, noKeyCount matches', async () => {
+      const chunks = ['• one', '• two', '• three'];
       const result = await cleanChunks(chunks, false, async () => 'cleaned');
-      expect(result.cleanedFlags.every((f) => f)).toBe(true);
+      expect(result.cleanedFlags).toEqual([true, true, true]);
       expect(result.chunks).toEqual(chunks);
+      expect(result.noKeyCount).toBe(3);
     });
 
-    it('counts 50 flagged chunks as all true when no key', async () => {
-      const chunks = Array.from({ length: 50 }, (_, i) => `• bullet ${i}`);
-      const result = await cleanChunks(chunks, false, async () => 'cleaned');
-      const falseCount = result.cleanedFlags.filter((f) => !f).length;
-      expect(falseCount).toBe(0);
+    it('no key: flagged chunk stays raw, noKeyCount=1', async () => {
+      const flagged = '• bullet point text';
+      expect(needsModelCleanup(flagged)).toBe(true);
+      const result = await cleanChunks([flagged], false, async () => 'cleaned');
+      expect(result.cleanedFlags[0]).toBe(true);
+      expect(result.chunks[0]).toBe(flagged);
+      expect(result.noKeyCount).toBe(1);
     });
 
-    it('flags false on real cleanup failure, keeps raw (never drop)', async () => {
+    it('cleanup failure: flag=true (raw), noKeyCount=0', async () => {
       const raw = '• bullet point';
-      const failingClean = async () => {
-        throw new Error('Auth failed');
-      };
-
+      const failingClean = async () => { throw new Error('Auth failed'); };
       const result = await cleanChunks([raw], true, failingClean);
-      expect(result.cleanedFlags[0]).toBe(false);
-      expect(result.chunks[0]).toBe(raw); // raw preserved
+      expect(result.cleanedFlags[0]).toBe(true);  // raw — failed
+      expect(result.chunks[0]).toBe(raw);
+      expect(result.noKeyCount).toBe(0);
     });
 
-    it('keeps raw when cleanup returns empty (exposes F2 guard)', async () => {
+    it('empty cleanup return: guard keeps raw, flag=true', async () => {
       const raw = '• bullet point text here';
-      // Clean returns empty string — guard should keep raw.
-      const emptyClean = async () => '';
-
-      const result = await cleanChunks([raw], true, emptyClean);
-      expect(result.cleanedFlags[0]).toBe(true); // guard treats empty as success
-      expect(result.chunks[0]).toBe(raw); // raw kept, not dropped
+      const result = await cleanChunks([raw], true, async () => '');
+      expect(result.cleanedFlags[0]).toBe(true);  // raw — empty guard
+      expect(result.chunks[0]).toBe(raw);
     });
 
-    it('treats whitespace-only cleanup as kept raw (guard check)', async () => {
+    it('whitespace-only cleanup: guard keeps raw', async () => {
       const raw = '• bullet point';
-      const whitespaceClean = async () => '   ';
-
-      const result = await cleanChunks([raw], true, whitespaceClean);
+      const result = await cleanChunks([raw], true, async () => '   ');
       expect(result.cleanedFlags[0]).toBe(true);
       expect(result.chunks[0]).toBe(raw);
     });
 
-    it('returns cleaned text and true flag on success', async () => {
+    it('successful cleanup: flag=false (cleaned)', async () => {
       const raw = '• bullet point';
       const cleaned = 'Bullet point';
-      const successClean = async () => cleaned;
-
-      const result = await cleanChunks([raw], true, successClean);
-      expect(result.cleanedFlags[0]).toBe(true);
+      const result = await cleanChunks([raw], true, async () => cleaned);
+      expect(result.cleanedFlags[0]).toBe(false);  // cleaned by LLM
       expect(result.chunks[0]).toBe(cleaned);
+      expect(result.noKeyCount).toBe(0);
     });
 
-    it('handles mixed success/failure across chunks', async () => {
-      const raw1 = '• flagged'; // needs cleanup
-      const raw2 = 'normal paragraph'; // no cleanup needed
-      const raw3 = 'degrees Celsius'; // needs cleanup
+    it('mixed: cleaned, no-cleanup-needed, failed', async () => {
+      const raw1 = '• flagged';       // needs cleanup → cleaned
+      const raw2 = 'normal paragraph'; // no cleanup needed → raw
+      const raw3 = '• broken';         // needs cleanup → fails → raw
 
       const mixedClean = async (c: string) => {
-        if (c.includes('flagged')) throw new Error('fail');
-        return c;
+        if (c.includes('broken')) throw new Error('fail');
+        return `cleaned: ${c}`;
       };
 
       const result = await cleanChunks([raw1, raw2, raw3], true, mixedClean);
+      // raw1: cleaned → false, raw2: no-cleanup-needed → true, raw3: failed → true
       expect(result.cleanedFlags).toEqual([false, true, true]);
-      expect(result.chunks).toEqual([raw1, raw2, raw3]); // only raw1 kept raw
+      expect(result.chunks).toEqual(['cleaned: • flagged', 'normal paragraph', '• broken']);
+      expect(result.noKeyCount).toBe(0);
+    });
+
+    it('no key + mixed flagged/unflagged: noKeyCount only counts chunks', async () => {
+      const chunks = ['• flagged', 'plain text', '• another flagged'];
+      const result = await cleanChunks(chunks, false, async () => 'cleaned');
+      expect(result.cleanedFlags).toEqual([true, true, true]);
+      expect(result.noKeyCount).toBe(3); // all 3 kept raw due to no key
     });
   });
 });

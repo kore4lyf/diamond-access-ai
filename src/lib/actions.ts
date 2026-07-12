@@ -20,7 +20,7 @@
 
 import { ERRORS } from './errors';
 import type { PageSnapshot } from './page-snapshot';
-import { enumerateImages, speakImageList, enumerateLinks, speakLinkList, nearestHeadingText } from './dom-walk';
+import { enumerateImages, speakImageList, enumerateLinks, speakLinkList, nearestHeadingText, type LinkEntry } from './dom-walk';
 import * as logger from './logger';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +44,7 @@ export type DiamondAction =
   | { action: 'describe_image'; elementIndex: number; description: string }
   | { action: 'list_images'; description: string }
   | { action: 'list_links'; description: string }
+  | { action: 'link_select'; description: string }
   | { action: 'read_article'; description: string }
   | { action: 'summarize_article'; description: string };
 
@@ -57,6 +58,92 @@ export type DiamondAction =
  * Cleared when the user confirms or cancels.
  */
 let pendingConfirm: DiamondAction | null = null;
+
+// ---------------------------------------------------------------------------
+// Module state (link-select resolution)
+// ---------------------------------------------------------------------------
+
+/**
+ * Candidates awaiting user disambiguation after a LINK_SELECT collision.
+ * When the LLM returns `collision`, we speak the candidates and store them
+ * here. The next utterance is checked against this list to resolve the pick.
+ */
+let pendingLinkSelect: LinkEntry[] | null = null;
+
+/**
+ * True if we're waiting for the user to disambiguate a link selection.
+ */
+export function hasPendingLinkSelect(): boolean {
+  return pendingLinkSelect !== null;
+}
+
+/**
+ * Store candidates for later disambiguation. Called when LINK_SELECT returns a
+ * `collision` so the user can say "number 2" or "the sports article" to pick.
+ */
+export function setPendingLinkSelect(candidates: LinkEntry[]): void {
+  pendingLinkSelect = candidates;
+}
+
+/**
+ * Resolve a collision via the user's next utterance. Returns the matched
+ * LinkEntry if found, null otherwise. The pending state is cleared on
+ * match OR cancel.
+ *
+ * Resolution order:
+ *   1. Ordinal numbers ("number 2", "open the second one", "link 3").
+ *   2. Keyword match against candidate text/heading (one clear winner).
+ *   3. Cancel phrases ("no", "cancel", "never mind") → clear and null.
+ */
+export function resolvePendingLinkSelect(
+  transcript: string,
+): { resolved: boolean; entry?: LinkEntry } {
+  if (!pendingLinkSelect) {
+    return { resolved: false };
+  }
+  const lower = transcript.toLowerCase().trim();
+
+  // Cancel detection
+  const CANCEL_PHRASES = new Set(['no', 'cancel', 'never mind', 'stop', 'nope', 'forget it']);
+  if (CANCEL_PHRASES.has(lower)) {
+    pendingLinkSelect = null;
+    return { resolved: false };
+  }
+
+  // Ordinal detection: "number 2", "the second one", "link 3", or just "2"
+  const ordinalMatch = lower.match(/(?:number|#|link)?\s*(\d+)/);
+  if (ordinalMatch) {
+    const n = parseInt(ordinalMatch[1], 10);
+    if (n >= 1 && n <= pendingLinkSelect.length) {
+      const entry = pendingLinkSelect[n - 1];
+      pendingLinkSelect = null;
+      return { resolved: true, entry };
+    }
+  }
+
+  // Keyword match against candidate text or heading
+  const keywords = lower.split(/\s+/).filter((w) => w.length > 2);
+  let best: LinkEntry | null = null;
+  let bestScore = 0;
+  for (const c of pendingLinkSelect) {
+    const hay = `${c.text} ${c.heading ?? ''}`.toLowerCase();
+    let score = 0;
+    for (const kw of keywords) {
+      if (hay.includes(kw)) score++;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  if (best && bestScore >= 1) {
+    pendingLinkSelect = null;
+    return { resolved: true, entry: best };
+  }
+
+  // No clear pick — keep pending, let content script prompt again
+  return { resolved: false };
+}
 
 // ---------------------------------------------------------------------------
 // Confirmation phrasing

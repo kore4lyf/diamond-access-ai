@@ -224,12 +224,15 @@ export function chunkForSummarize(
  * Patterns:
  *   - bullet/symbol chars (•, ★, arrows, nbsp)
  *   - math symbols (∑, √, ∫, ×, ÷, ±, ≠, ≤, ≥, ∞)
- *   - spelled-out units (degrees, kilometers, hours, etc.)
+ *   - number + spelled-out unit (3 kilometers, 5 degrees, 10 hours)
  *   - emoji + dingbats
  *
- * Note: bare decimals (3.14) and bare units (°C, £2, 5 m) are NOT flagged.
- * They read acceptably as-is (three point one four, pounds two, five meters).
- * Only when units are spelled out (kilometers, degrees) do we need expansion.
+ * Does NOT trigger on:
+ *   - bare decimals (3.14, 0.5) — read fine as-is
+ *   - bare currency (£2, $10.50) — read fine as-is
+ *   - bare abbreviations (5 m, 10 kg) — read fine as-is
+ *   - standalone unit words without numbers (km, miles) — too ambiguous,
+ *     would false-positive on nav labels, headings, etc.
  *
  * Lazy-invoke only when this returns true (correction #1 from you:
  * model in the read path is wasteful — only invoke when needed for
@@ -240,7 +243,7 @@ export function needsModelCleanup(chunk: string): boolean {
   return (
     /[\u2022\u2023\u2043\u2212\u00a0\u2605\u2606\u2190-\u21ff]/.test(chunk) || // bullets, nbsp, stars, arrows
     /[∑√∫×÷=±≠≤≥∞]/.test(chunk) || // math symbols
-    /\b(degrees?|kilometers?|miles?|hours?|minutes?|seconds?|meters?|pounds?|ounces?|kilograms?|grams?)\b/i.test(chunk) || // spelled units
+    /\d\s+(degrees?|kilometers?|miles?|hours?|minutes?|seconds?|meters?|pounds?|ounces?|kilograms?|grams?)\b/i.test(chunk) || // number + spelled unit
     /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u.test(chunk) // emoji + dingbats
   );
 }

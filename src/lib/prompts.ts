@@ -128,6 +128,12 @@ ELEMENT-INDEX RULES:
 - elementIndex is the integer N in PAGE STRUCTURE (1-indexed). Use exactly that integer.
 - elementIndex 0 means the page structure had no interactive elements. Use {"action":"none","speech":"I couldn't find anything interactive on this page."} instead.
 
+FORM ELEMENT TARGETING:
+- Input/button lines include metadata after the name: name="..." type="..." placeholder="...".
+- Use name, type, and placeholder to disambiguate when multiple textboxes or buttons exist.
+- For "search for X" / "type X in the search box": use fill on the textbox, then the user can say "click search" to submit.
+- For "fill the email": match placeholder or name containing "email" (not just the first textbox).
+
 FORMAT RULES:
 - Respond with the JSON object and NOTHING ELSE. No prose. No markdown fences. No \`\`\`json.
 - Plain English descriptions ≤ 6 words. ("Going to checkout.", "Clicking Add to Cart.")
@@ -204,6 +210,15 @@ LOCATE/OPEN A SPECIFIC STORY — CLICK-GROUNDING RULE:
   Example — CORRECT: PAGE STRUCTURE has [link] "Read more — Demonstration in Gelderland town against anti-LGBTQI+ policy" → /news/lgbtq at elementIndex 25. Transcript: "open the lgbtq article". Output: {"action":"click","elementIndex":25,"description":"Opening the LGBTQ article."}
   Example — WRONG: PAGE STRUCTURE has [link] "Health" → /health at elementIndex 5 and [link] "Read more" → /news/lgbtq at elementIndex 25. Transcript: "open the lgbtq article". Output: {"action":"list_links","description":"Listing links to find the LGBTQ story."} — because the [link] "Read more" line has no heading enrichment matching "lgbtq" in this example.
 
+SEMANTIC LINK REQUESTS — USE link_select INSTEAD OF list_links (Phase K):
+  When the user asks to "open", "find", "go to", or "show me" a link BY DESCRIPTION and no [link] line clearly matches the keyword, emit:
+    {"action":"link_select","description":"<their exact words>"}
+  This triggers a second LLM call with the FULL link list as context. The LLM picks the best index (only from the provided list) or returns a collision if ambiguous. This is better than list_links for blind users — they get a direct navigation instead of having to count and say "number 7".
+  Use link_select in preference to list_links when:
+    - The user’s description includes topic/keywords ("privacy policy", "layoff article") with no matching heading/URL.
+    - Multiple links might match (you’re unsure) — the LLM will resolve collision for you.
+  Exception: still use list_links when the user explicitly asks to enumerate ("list all links", "what links are here") — that’s a different intent.
+
 POSITIONAL COMMANDS — NOT COVERED BY THIS RULE:
   Commands that specify POSITION (not identity) do NOT require grounding. Just emit click with your best-guess elementIndex based on the position described:
     - "go to the first article" / "open the top story" / "click the next headline" → emit click on the first/nth/topmost article card in DOM order
@@ -222,6 +237,15 @@ OUTPUT: {"action":"navigate","url":"/checkout","description":"Going to checkout.
 
 INPUT: PAGE_STRUCTURE has email field at elementIndex 12. Transcript: "fill the email with mike@example.com".
 OUTPUT: {"action":"fill","fields":[{"elementIndex":12,"value":"mike@example.com"}],"description":"Filling the email field."}
+
+INPUT: PAGE_STRUCTURE has [textbox] "Search" at elementIndex 3. Transcript: "type test in the search box".
+OUTPUT: {"action":"fill","fields":[{"elementIndex":3,"value":"test"}],"description":"Typing test in the search box."}
+
+INPUT: PAGE_STRUCTURE has [button] "Google Search" at elementIndex 5. Transcript: "click search".
+OUTPUT: {"action":"click","elementIndex":5,"description":"Clicking the search button."}
+
+INPUT: PAGE_STRUCTURE has [textbox] "Search" at elementIndex 3 and [button] "Google Search" at elementIndex 5. Transcript: "search for test".
+OUTPUT: {"action":"fill","fields":[{"elementIndex":3,"value":"test"}],"description":"Searching for test."}
 
 INPUT: PAGE_STRUCTURE has Submit button at elementIndex 89. Transcript: "submit the application".
 OUTPUT: {"action":"confirm","speech":"This will submit your application. Say 'confirm' to proceed.","pendingAction":{"action":"click","elementIndex":89,"description":"Submitting application."}}
@@ -564,4 +588,47 @@ export function buildProfileFillPrompt(opts: ProfileFillBuildOpts): string {
     '{profile_labels_block}',
     profileLines.length > 0 ? profileLines.join('\n') : '(no profile entries)',
   );
+}
+
+// ---------------------------------------------------------------------------
+// Link-selection semantic match (Phase K)
+//
+// When the user asks for a link by description (e.g., "open the privacy
+// policy"), and no elementIndex is obvious, LINK_SELECT sends all links
+// to the LLM. The LLM must return ONLY an index into the provided list
+// (prevents URL invention).
+// ---------------------------------------------------------------------------
+
+export const LINK_SELECT_TASK = `TASK: Link selection. You are given a numbered list of links on the page AND the user's description of which link they want. Pick the best match.
+
+OUTPUT FORMAT (respond with ONLY the JSON object, no other text):
+- {"action":"navigate","index":<N>}  ← single best match (N must be from the list below)
+- {"action":"collision","candidates":[<N>,...],"message":"<clarifying message>"}  ← multiple matches
+- {"action":"none","speech":"<brief explanation>"}  ← no match found
+
+RULES:
+- You may ONLY return an index that exists in the list below. Never invent a URL.
+- If several links clearly match the user's description, return collision with their indices and a short question.
+- If none match, return action:none with speech saying so briefly.
+`;
+
+export interface LinkSelectBuildOpts {
+  transcript: string;
+  links: Array<{ index: number; text: string; heading?: string; href?: string }>;
+}
+
+/**
+ * Build the user-message for LINK_SELECT.
+ * The system-role prompt (LINK_SELECT_TASK) is passed separately.
+ */
+export function buildLinkSelectPrompt(opts: LinkSelectBuildOpts): string {
+  const lines = opts.links.map((l) => {
+    const display = l.heading
+      ? `${l.text} — ${l.heading}`
+      : l.text;
+    const truncated = display.length > 100 ? display.slice(0, 100) + '…' : display;
+    return `${l.index}. ${truncated}`;
+  });
+
+  return `User wants: "${opts.transcript}"\n\nLinks on this page:\n${lines.join('\n')}\n\nPick the best match.`;
 }

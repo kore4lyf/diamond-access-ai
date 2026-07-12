@@ -67,6 +67,7 @@ export type LogCategory =
   | 'profile'
   | 'voice'
   | 'storage'
+  | 'link_select'
   | 'system'
   | 'error';
 

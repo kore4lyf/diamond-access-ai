@@ -94,6 +94,18 @@ export const ERRORS = {
   /** User cancelled or said something other than yes/confirm. */
   ACTION_CANCELLED: 'Action cancelled.',
 
+  // ── Link selection (Phase K) ─────────────────────────────────────────
+
+  /**
+   * LLM returned malformed/unknown response for link_select.
+   */
+  LINK_SELECT_FAILED: "I couldn't match that link. Try rephrasing.",
+
+  /**
+   * No matching link was found for the user's description.
+   */
+  LINK_NOT_FOUND: "I couldn't find that link on the page.",
+
   // ── Context / session ────────────────────────────────────────────────
 
   /** Session was successfully cleared. */

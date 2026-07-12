@@ -21,6 +21,8 @@ import {
   buildCommandPrompt,
   buildPageLoadPrompt,
   buildVlmPrompt,
+  buildLinkSelectPrompt,
+  LINK_SELECT_TASK,
   type SupplementarySnapshot,
 } from '../lib/prompts';
 import { parseCrossTabMatches } from '../lib/cross-tab';
@@ -34,6 +36,8 @@ import {
   nextMode,
 } from '../lib/storage';
 import { ERRORS } from '../lib/errors';
+import { parseLinkSelectResponse } from '../lib/link-select';
+import type { LinkEntry } from '../lib/dom-walk';
 import * as logger from '../lib/logger';
 
 export default defineBackground(() => {
@@ -215,6 +219,15 @@ export default defineBackground(() => {
       //    job.
       if (msg.type === 'READ_ARTICLE') {
         handleReadArticle(msg, sendResponse);
+        return true;
+      }
+
+      // ── LINK_SELECT: LLM-powered link selection by description.
+      // Phase K: When the user asks for a link by semantic description
+      // ("open the privacy policy", "the news link about layoffs"),
+      // we send all links to the LLM to pick the matching index.
+      if (msg.type === 'LINK_SELECT') {
+        handleLinkSelect(msg, sendResponse);
         return true;
       }
 
@@ -758,6 +771,69 @@ async function handleCommand(
 }
 
 /**
+ * LINK_SELECT: LLM-powered link selection by description.
+ *
+ * Receives { transcript, links } where links is an array of {index, text, heading, href}.
+ * Calls the LLM with a specialized prompt, parses the response, validates that
+ * any returned index is real, and maps it to the actual URL.
+ */
+async function handleLinkSelect(
+  msg: Record<string, unknown>,
+  sendResponse: (response?: unknown) => void,
+): Promise<void> {
+  const sw = new logger.Stopwatch('link_select', 'LINK_SELECT');
+  try {
+    const { diamond_api_key } = await chrome.storage.local.get('diamond_api_key');
+    if (!diamond_api_key) {
+      sendResponse({ action: 'none', speech: ERRORS.API_KEY_MISSING });
+      sw.stop('api-key-missing');
+      return;
+    }
+
+    const transcript = msg.transcript as string | undefined;
+    const linksRaw = msg.links as Array<{ index?: unknown; text?: unknown; heading?: unknown; href?: unknown }> | undefined;
+
+    if (!transcript || !linksRaw?.length) {
+      sendResponse({ action: 'none', speech: ERRORS.LINK_NOT_FOUND ?? 'I could not find that link.' });
+      sw.stop('missing-input');
+      return;
+    }
+
+    // Normalize links to the expected shape
+    const links = linksRaw
+      .map((l, i) => ({
+        index: typeof l.index === 'number' ? l.index : i + 1,
+        text: typeof l.text === 'string' ? l.text : '',
+        heading: typeof l.heading === 'string' ? l.heading : '',
+        href: typeof l.href === 'string' ? l.href : '',
+      }))
+      .filter((l) => typeof l.index === 'number' && l.text && l.href) as unknown as Array<{ index: number; text: string; heading: string; href: string }>;
+
+    // Type-cast to LinkEntry (we know the shape matches after validation)
+    const linkEntries = links as LinkEntry[];
+
+    if (linkEntries.length === 0) {
+      sendResponse({ action: 'none', speech: ERRORS.LINK_NOT_FOUND ?? 'I could not find that link.' });
+      sw.stop('no-valid-links');
+      return;
+    }
+
+    const userMessage = buildLinkSelectPrompt({ transcript, links: linkEntries });
+    const responseText = await callLLMWithRetry(LINK_SELECT_TASK, userMessage);
+    const parsed = parseLinkSelectResponse(responseText, linkEntries);
+
+    logger.info('link_select', 'result', { action: parsed.action, transcript });
+    sw.stop(parsed.action);
+    sendResponse(parsed);
+  } catch (e: unknown) {
+    const err = e instanceof Error ? e.message : String(e);
+    logger.error('link_select', 'failure', { err });
+    sendResponse({ action: 'none', speech: ERRORS.LINK_SELECT_FAILED ?? 'I could not find that link.' });
+    sw.stop('error');
+  }
+}
+
+/**
  * PAGE_LOAD: Auto-summary on page navigation.
  *
  * Receives { url, structure } from the content script,
@@ -1179,7 +1255,7 @@ async function handleReadArticle(
       const { diamond_api_key } = await chrome.storage.local.get('diamond_api_key');
       const hasKey = Boolean((diamond_api_key as string | undefined)?.trim());
 
-      const { chunks: cleaned, cleanedFlags } = await cleanChunks(
+      const { chunks: cleaned, cleanedFlags, noKeyCount } = await cleanChunks(
         sizeCapped,
         hasKey,
         (c) => callLLMWithRetry(
@@ -1199,10 +1275,11 @@ async function handleReadArticle(
 
       logger.info('read_article', 'aloud: ready to stream', {
         chunks: finalChunks.length,
-        cleanedCount: finalFlags.filter(Boolean).length,
+        cleanedCount: finalFlags.filter((f) => !f).length,
+        noKeyCount,
       });
       try {
-        sendResponse({ chunks: finalChunks, cleanedFlags: finalFlags, mode: 'aloud' });
+        sendResponse({ chunks: finalChunks, cleanedFlags: finalFlags, noKeyCount, mode: 'aloud' });
       } catch (sendErr) {
         logger.warn('read_article', 'sendResponse threw (channel closed)', {
           err: sendErr instanceof Error ? sendErr.message : String(sendErr),
