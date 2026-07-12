@@ -194,16 +194,17 @@ describe('Alt+D — talk over Diamond', () => {
     expect(cancelMock()).not.toHaveBeenCalled();
   });
 
-  it('inside a form field: does NOT interrupt', async () => {
+  it('inside a form field: DOES interrupt (Alt+D is a chord, not literal text)', async () => {
     const input = document.createElement('input');
     document.body.appendChild(input);
 
     voice.speak('Reply in progress'); // isSpeaking true
+    const sessionsBefore = speechRecognitionCtor.mock.calls.length;
     input.dispatchEvent(key('KeyD', { altKey: true }));
     await tick();
 
-    expect(cancelMock()).not.toHaveBeenCalled();
-    expect(speechRecognitionCtor.mock.calls.length).toBe(0);
+    expect(cancelMock()).toHaveBeenCalled();
+    expect(speechRecognitionCtor.mock.calls.length).toBe(sessionsBefore + 1);
   });
 });
 

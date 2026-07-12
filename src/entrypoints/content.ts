@@ -277,7 +277,11 @@ export default defineContentScript({
     //   - `!e.shiftKey`        — modifier exclusivity vs. Alt+Shift+D fallback
     //   - `!e.ctrlKey && !e.metaKey` — avoid clobbering Ctrl+Alt+D / Cmd+Alt+D
     //   - `!e.repeat`          — ignore OS key-repeat double-fire
-    //   - target is NOT a form field / contentEditable — never steal typing
+    //
+    // Alt+D is a chord with a real modifier — pressing Alt alone doesn't
+    // insert characters into form fields — so we let it fire everywhere
+    // (including inputs/textareas/contentEditable). The user explicitly
+    // needs Alt+D to work while they're focused in a search box.
     window.addEventListener(
       'keydown',
       (e: KeyboardEvent) => {
@@ -290,15 +294,6 @@ export default defineContentScript({
           e.repeat
         ) {
           return;
-        }
-        const target = e.target;
-        if (
-          target instanceof HTMLInputElement ||
-          target instanceof HTMLTextAreaElement ||
-          target instanceof HTMLSelectElement ||
-          (target instanceof HTMLElement && target.isContentEditable)
-        ) {
-          return; // user is typing — don't interrupt.
         }
         e.preventDefault();
         e.stopPropagation();
@@ -313,8 +308,11 @@ export default defineContentScript({
     // Same capture-phase pattern as Alt+D:
     //   - locale-independent (`e.code === 'KeyS'`, not `e.key`)
     //   - modifier exclusivity (Alt only; Alt+Shift+S ignored)
-    //   - ignores form fields / contentEditable (never steal typing)
     //   - preventDefault stops any browser-level handler
+    //
+    // Alt+S is a chord with a real modifier — same reasoning as Alt+D:
+    // we let it fire inside form fields so the user can toggle mode while
+    // they're focused in a search box.
     //
     // Forwards as a `TOGGLE_MODE` message so the SW's `toggleModeViaStorage`
     // remains the single home for the actual flip + broadcast + speak.
@@ -330,15 +328,6 @@ export default defineContentScript({
           e.ctrlKey ||
           e.metaKey ||
           e.repeat
-        ) {
-          return;
-        }
-        const target = e.target;
-        if (
-          target instanceof HTMLInputElement ||
-          target instanceof HTMLTextAreaElement ||
-          target instanceof HTMLSelectElement ||
-          (target instanceof HTMLElement && target.isContentEditable)
         ) {
           return;
         }
