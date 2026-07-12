@@ -281,6 +281,45 @@ function resolveElementByKeywords(
 }
 
 // ---------------------------------------------------------------------------
+// Nav-region guard (prevents "go to the first story" landing on first nav)
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether an element is inside a navigation region.
+ * Walks ancestors and tests for nav/header landmarks or ARIA roles.
+ * On news sites, header nav links get low elementIndex and the LLM often
+ * picks one of them when the user asked for the "first article/story".
+ */
+function isInNavRegion(el: HTMLElement): boolean {
+  let cur: Element | null = el;
+  while (cur) {
+    if (cur.tagName === 'NAV' || cur.tagName === 'HEADER') return true;
+    const role = cur.getAttribute('role');
+    if (role === 'navigation' || role === 'banner') return true;
+    cur = cur.parentElement;
+  }
+  return false;
+}
+
+/**
+ * Walk forward from `startIndex` (1-based, inclusive) through snapshot.elements
+ * and return the first element that is NOT inside a nav region.
+ * If none exist in the snapshot, returns null.
+ */
+function findContentElementAfter(
+  startIndex: number,
+  snapshot: PageSnapshot,
+): HTMLElement | null {
+  const start = Math.max(1, startIndex);
+  for (let i = start - 1; i < snapshot.elements.length; i++) {
+    const el = snapshot.elements[i];
+    if (!el) continue;
+    if (!isInNavRegion(el)) return el;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // clickAction
 // ---------------------------------------------------------------------------
 
@@ -346,6 +385,26 @@ export function clickAction(
         description,
       });
       return "I couldn't find a link matching that. Say 'list the links' to hear them numbered.";
+    }
+  }
+
+  // Nav-region guard: if the resolved element lives inside <nav> / <header>
+  // (or has role=navigation/banner), the LLM likely picked a header link when
+  // the user meant content. Walk forward from elementIndex to the first
+  // non-nav interactive element and re-target.
+  // Known trade-off: legitimate "go to the Weather section" commands will
+  // also be re-targeted to the first content element. On news / commerce
+  // sites this is the lesser wrong — sections don't have primary content.
+  // Skipped if verified el is already outside nav (no re-target needed).
+  if (isInNavRegion(el as HTMLElement)) {
+    const content = findContentElementAfter(elementIndex, snapshot);
+    if (content) {
+      logger.info('action', 'click: re-targeted from nav to content', {
+        requestedIndex: elementIndex,
+        fromTag: el.tagName,
+        toTag: content.tagName,
+      });
+      el = content;
     }
   }
 
