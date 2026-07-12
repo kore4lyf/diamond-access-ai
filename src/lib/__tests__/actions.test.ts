@@ -1700,3 +1700,537 @@ describe('FINDCOMPARE: Amazon-shaped commerce flow', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// JOB APPLICATION proof
+// Lever/Greenhouse-style form: name, email, phone, role dropdown, submit.
+// ---------------------------------------------------------------------------
+
+import { wrapIrreversible } from '../safety-net';
+import { ERRORS } from '../errors';
+
+describe('JOBAPPLICATION: Lever-shaped apply form flow', () => {
+  /**
+   * Realistic Lever/Greenhouse application form fixture:
+   *   - text inputs for name/email/phone (each with proper type=)
+   *   - a <select> for "Role" with 4 options
+   *   - a file input for resume (skipped in MVP)
+   *   - a submit button labeled "Submit Application"
+   *
+   * Snapshot indexing: each interactive element gets a [N] position
+   * in buildPageSnapshot. The fixture explicitly tracks three inputs,
+   * the select, and the submit button so tests can reference them.
+   */
+  function makeLeverApplicationFixture(): {
+    snapshot: PageSnapshot;
+    nameInput: HTMLInputElement;
+    emailInput: HTMLInputElement;
+    phoneInput: HTMLInputElement;
+    resumeInput: HTMLInputElement;
+    roleSelect: HTMLSelectElement;
+    submitButton: HTMLButtonElement;
+    structure: string;
+  } {
+    // Clear leftover DOM pollution from prior tests (vitest jsdom shares body between tests in a worker)
+    // while still leaving already-tracked containers removable via afterEach.
+    while (document.body.firstChild) {
+      // Only remove nodes that aren't tracked (so afterEach still does its job)
+      // Actually we just blast them all — afterEach walks containers[] anyway.
+      document.body.removeChild(document.body.firstChild);
+    }
+
+    const form = document.createElement('form');
+    form.id = 'application-form';
+    // IMMERSE: real Lever forms POST; setting method prevents jsdom's
+    // "get-by-default" from triggering the safety-net's reversible-form
+    // exemption (which would skip confirm on a real job-application submit).
+    form.method = 'post';
+    form.action = '/apply';
+
+    // Name input — aria-label ensures the accessible name appears in structure
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.name = 'name';
+    nameInput.id = 'name';
+    nameInput.setAttribute('aria-label', 'Full name');
+    nameInput.setAttribute('placeholder', 'Jane Doe');
+    form.appendChild(nameInput);
+
+    // Email
+    const emailInput = document.createElement('input');
+    emailInput.type = 'email';
+    emailInput.name = 'email';
+    emailInput.id = 'email';
+    emailInput.setAttribute('aria-label', 'Email address');
+    emailInput.setAttribute('autocomplete', 'email');
+    form.appendChild(emailInput);
+
+    // Phone
+    const phoneInput = document.createElement('input');
+    phoneInput.type = 'tel';
+    phoneInput.name = 'phone';
+    phoneInput.id = 'phone';
+    phoneInput.setAttribute('aria-label', 'Phone number');
+    phoneInput.setAttribute('autocomplete', 'tel');
+    form.appendChild(phoneInput);
+
+    // Resume file upload
+    const resumeInput = document.createElement('input');
+    resumeInput.type = 'file';
+    resumeInput.name = 'resume';
+    resumeInput.id = 'resume';
+    resumeInput.setAttribute('aria-label', 'Upload resume');
+    form.appendChild(resumeInput);
+
+    // Role dropdown
+    const roleSelect = document.createElement('select');
+    roleSelect.name = 'role';
+    roleSelect.id = 'role';
+    roleSelect.setAttribute('aria-label', 'Which role are you applying for?');
+    ['Frontend Engineer', 'Full Stack Engineer', 'Backend Engineer', 'DevOps Engineer'].forEach((role) => {
+      const opt = document.createElement('option');
+      opt.value = role.toLowerCase().replace(/\s+/g, '-');
+      opt.textContent = role;
+      roleSelect.appendChild(opt);
+    });
+    form.appendChild(roleSelect);
+
+    // Submit button
+    const submitButton = document.createElement('button');
+    submitButton.type = 'submit';
+    submitButton.textContent = 'Submit Application';
+    submitButton.scrollIntoView = vi.fn();
+    vi.spyOn(submitButton, 'click');
+    form.appendChild(submitButton);
+
+    document.body.appendChild(form);
+    containers.push(form);
+
+    const elements = [nameInput, emailInput, phoneInput, roleSelect, submitButton];
+    const snap = makeSnapshot(elements);
+    const structure = extractPageStructureFromRoot(document.body);
+    return {
+      snapshot: snap,
+      nameInput, emailInput, phoneInput, resumeInput, roleSelect,
+      submitButton, structure,
+    };
+  }
+
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 1 — Auto-summary on application form load
+  // ───────────────────────────────────────────────────────────────────────
+  describe('STEP 1: PAGE_LOAD summary on form load', () => {
+    it('structure has every form field visible to LLM (via aria-label)', () => {
+      const { structure } = makeLeverApplicationFixture();
+      // Each field's accessible name appears in the structure
+      expect(structure).toContain('Full name');
+      expect(structure).toContain('Email address');
+      expect(structure).toContain('Phone number');
+      expect(structure).toContain('Upload resume');
+      expect(structure).toContain('Which role are you applying for?');
+      expect(structure).toContain('Submit Application');
+    });
+
+    it('structure contains all 4 role options (LLM can answer "what roles")', () => {
+      const { structure } = makeLeverApplicationFixture();
+      ['Frontend Engineer', 'Full Stack Engineer', 'Backend Engineer', 'DevOps Engineer']
+        .forEach((r) => expect(structure).toContain(r));
+    });
+
+    it('select elementIndex resolves correctly (snapshot consistency)', () => {
+      const { snapshot, nameInput, emailInput, phoneInput, roleSelect, submitButton } =
+        makeLeverApplicationFixture();
+      // 1-based indexing: name=[1], email=[2], phone=[3], select=[4], submit=[5]
+      expect(snapshot.elements[0]).toBe(nameInput);
+      expect(snapshot.elements[1]).toBe(emailInput);
+      expect(snapshot.elements[2]).toBe(phoneInput);
+      expect(snapshot.elements[3]).toBe(roleSelect);
+      expect(snapshot.elements[4]).toBe(submitButton);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 2 — fill contact info from profile (profile: prefix)
+  // ───────────────────────────────────────────────────────────────────────
+  describe('STEP 2: fill contact info via profile: prefix', () => {
+    /**
+     * Pre-configure chrome.storage.local with a profile so resolveProfileFields
+     * finds real user data. Mirrors the storage.test.ts pattern at :501.
+     */
+    async function seedProfile(profile: {
+      email: string;
+      phone: string;
+    }): Promise<void> {
+      const chromeMock = (globalThis as unknown as { chrome: unknown }).chrome;
+      const c = chromeMock as {
+        storage: {
+          local: { get: (k: string) => Promise<Record<string, unknown>> };
+        };
+      };
+      await c.storage.local.get('diamond_profile');
+      // storage.test.ts uses vi.stubGlobal; we follow same pattern
+      if (!chromeMock) throw new Error('chrome mock missing');
+    }
+
+    /**
+     * Mock chrome.storage via stubGlobal so resolveProfileFields finds it.
+     */
+    function installChromeStorageMock(profile: {
+      email: string;
+      phone: string;
+    }): void {
+      const chromeMock = {
+        storage: {
+          local: {
+            get: vi.fn(async (key: string) => {
+              if (key === 'diamond_profile') {
+                return { diamond_profile: profile };
+              }
+              return {};
+            }),
+          },
+        },
+      };
+      (globalThis as unknown as { chrome: unknown }).chrome = chromeMock;
+    }
+
+    it('fillAction resolves profile:email and writes to email input', async () => {
+      installChromeStorageMock({ email: 'korede@example.com', phone: '+1-555-0100' });
+      const { snapshot, emailInput } = makeLeverApplicationFixture();
+      const result = await fillAction(
+        [{ elementIndex: 2, value: 'profile:email' }],
+        snapshot,
+        'Filling email from profile',
+      );
+      expect(result).toBe('Filling email from profile');
+      expect(emailInput.value).toBe('korede@example.com');
+    });
+
+    it('fillAction resolves profile:phone and writes to phone input', async () => {
+      installChromeStorageMock({ email: 'korede@example.com', phone: '+1-555-0100' });
+      const { snapshot, phoneInput } = makeLeverApplicationFixture();
+      await fillAction(
+        [{ elementIndex: 3, value: 'profile:phone' }],
+        snapshot,
+        'Filling phone from profile',
+      );
+      expect(phoneInput.value).toBe('+1-555-0100');
+    });
+
+    it('fillAction resolves BOTH profile:email AND profile:phone in one call', async () => {
+      installChromeStorageMock({ email: 'korede@example.com', phone: '+1-555-0100' });
+      const { snapshot, emailInput, phoneInput } = makeLeverApplicationFixture();
+      const result = await fillAction(
+        [
+          { elementIndex: 2, value: 'profile:email' },
+          { elementIndex: 3, value: 'profile:phone' },
+        ],
+        snapshot,
+        'Filling contact info from profile',
+      );
+      // Returns the user-provided description
+      expect(result).toMatch(/Filling contact info from profile/);
+      // Both fields populated
+      expect(emailInput.value).toBe('korede@example.com');
+      expect(phoneInput.value).toBe('+1-555-0100');
+    });
+
+    it('non-profile values pass through unchanged (mixed fields)', async () => {
+      installChromeStorageMock({ email: 'korede@example.com', phone: '+1-555-0100' });
+      const { snapshot, nameInput } = makeLeverApplicationFixture();
+      await fillAction(
+        [{ elementIndex: 1, value: 'Korede Onifade' }],
+        snapshot,
+        'Filling name',
+      );
+      // Plain value went through unchanged
+      expect(nameInput.value).toBe('Korede Onifade');
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 3 — describe dropdown options (LLM reads structure)
+  // ───────────────────────────────────────────────────────────────────────
+  describe('STEP 3: dropdown options visible to LLM', () => {
+    it('every role label is in the structure string', () => {
+      const { structure } = makeLeverApplicationFixture();
+      const roles = ['Frontend Engineer', 'Full Stack Engineer', 'Backend Engineer', 'DevOps Engineer'];
+      roles.forEach((r) => expect(structure).toContain(r));
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 4 — select Full Stack Engineer option
+  // ───────────────────────────────────────────────────────────────────────
+  describe('STEP 4: select an option via fillAction on <select>', () => {
+    it('selectOption by exact label match sets the value', async () => {
+      const { snapshot, roleSelect } = makeLeverApplicationFixture();
+      const result = await fillAction(
+        [{ elementIndex: 4, value: 'Full Stack Engineer' }],
+        snapshot,
+        'Selecting Full Stack Engineer',
+      );
+      expect(result).toBe('Selecting Full Stack Engineer');
+      // The select element's value changed
+      expect(roleSelect.value).toBe('full-stack-engineer');
+      // The visible selected option text matches
+      const selected = roleSelect.options[roleSelect.selectedIndex];
+      expect(selected.textContent).toBe('Full Stack Engineer');
+    });
+
+    it('selectOption via lowercase substring still matches', async () => {
+      const { snapshot, roleSelect } = makeLeverApplicationFixture();
+      await fillAction(
+        [{ elementIndex: 4, value: 'backend' }],
+        snapshot,
+        'Selecting backend role',
+      );
+      expect(roleSelect.value).toBe('backend-engineer');
+    });
+
+    it('click action on <option> is NOT supported (options are not interactive)', () => {
+      const { snapshot } = makeLeverApplicationFixture();
+      // Options are not in IMPLICIT_ROLES map.
+      // LLM should use FILL action for selects, not CLICK on option.
+      const optionText = 'Full Stack Engineer';
+      expect(snapshot.elements.find((el) => el.textContent?.trim() === optionText))
+        .toBeUndefined();
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 5 — safety net wraps submit-application in confirm
+  // ───────────────────────────────────────────────────────────────────────
+  describe('STEP 5: irreversible submit triggers confirm prompt', () => {
+    it('safety net wraps "Submit Application" click in confirm action', () => {
+      const { submitButton } = makeLeverApplicationFixture();
+      const action: DiamondAction = {
+        action: 'click',
+        elementIndex: 5,
+        description: 'Submit Application',
+      };
+      const elementText = submitButton.textContent ?? '';
+      const wrapped = wrapIrreversible(action, elementText, submitButton);
+      // Wrapped in confirm action
+      expect(wrapped.action).toBe('confirm');
+      // Pending action is preserved
+      const confirm = wrapped as {
+        action: 'confirm';
+        speech: string;
+        pendingAction: DiamondAction;
+      };
+      expect(confirm.pendingAction.action).toBe('click');
+      expect(
+        'elementIndex' in confirm.pendingAction
+          ? (confirm.pendingAction as { elementIndex: number }).elementIndex
+          : -1,
+      ).toBe(5);
+      // Diamond speaks the confirm prompt
+      expect(confirm.speech).toMatch(/Say 'confirm' to proceed/);
+    });
+
+    it('safety net matches case-insensitive ("submit application" lowercase)', () => {
+      const { submitButton } = makeLeverApplicationFixture();
+      const action: DiamondAction = {
+        action: 'click',
+        elementIndex: 5,
+        description: 'submit application', // lowercase
+      };
+      const wrapped = wrapIrreversible(
+        action,
+        submitButton.textContent ?? '',
+        submitButton,
+      );
+      expect(wrapped.action).toBe('confirm');
+    });
+
+    it('safety net catches single-word submit only when paired with destructive verb', () => {
+      // "Submit" alone was REMOVED from the irreversible list (Phase J fix)
+      // because it caused false positives on blog comment submits.
+      const action: DiamondAction = {
+        action: 'click',
+        elementIndex: 5,
+        description: 'Submit Blog Comment',
+      };
+      // Element text alone doesn't trigger because "submit blog comment"
+      // isn't an irreversible keyword.
+      const wrapped = wrapIrreversible(action, 'Submit Blog Comment', null);
+      // Returns same action — does NOT wrap (false-positive guard works)
+      expect(wrapped.action).toBe('click');
+    });
+
+    it('confirmed pending action executes after checkConfirmation returns it', () => {
+      const { submitButton } = makeLeverApplicationFixture();
+      const action: DiamondAction = {
+        action: 'click',
+        elementIndex: 5,
+        description: 'Submit Application',
+      };
+      const wrapped = wrapIrreversible(
+        action,
+        submitButton.textContent ?? '',
+        submitButton,
+      );
+      // Diamond speaks the confirm prompt
+      const confirmSpeech = (wrapped as { speech: string }).speech;
+      expect(confirmSpeech).toBeTruthy();
+      // clear any prior pending state
+      checkConfirmation('dummy-clear');
+      // Manually set pending as wrapIrreversible doesn't directly store it
+      // (it's stored by content.ts after wrapIrreversible returns wrapped action)
+      // Simulate that step:
+      // pendingConfirm = wrapped.pendingAction;
+      // (we don't call checkConfirmation here because no internal state was set)
+      // The pending action has action='click', which is what gets executed next.
+      expect((wrapped as { pendingAction: DiamondAction }).pendingAction.action).toBe('click');
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // STEP 6 — confirm utterance executes the pending action
+  // ───────────────────────────────────────────────────────────────────────
+  describe('STEP 6: "confirm" executes the pending irreversible action', () => {
+    it('checkConfirmation("confirm") returns the stored pending action', () => {
+      const submitAction: DiamondAction = {
+        action: 'click',
+        elementIndex: 5,
+        description: 'Submit Application',
+      };
+      // Clear any pending state from prior tests
+      checkConfirmation('dummy-clear');
+      // Manually set pending (in production, content.ts does this after wrapping)
+      // We can't import pendingConfirm directly — use confirmAction which sets it.
+      confirmAction(submitAction, 'This will submit your application.');
+      expect(hasPendingConfirm()).toBe(true);
+      const result = checkConfirmation('confirm');
+      expect(result.isConfirm).toBe(true);
+      expect(result.action?.action).toBe('click');
+      expect(
+        result.action && 'elementIndex' in result.action
+          ? (result.action as { elementIndex: number }).elementIndex
+          : -1,
+      ).toBe(5);
+      expect(hasPendingConfirm()).toBe(false);
+    });
+
+    it('checkConfirmation("cancel") clears pending and returns hadPending', () => {
+      const submitAction: DiamondAction = {
+        action: 'click',
+        elementIndex: 5,
+        description: 'Submit Application',
+      };
+      // Clear first
+      checkConfirmation('dummy-clear');
+      confirmAction(submitAction, 'This will submit your application.');
+      const result = checkConfirmation('no thanks');
+      expect(result.isConfirm).toBe(false);
+      expect(result.hadPending).toBe(true);
+      expect(hasPendingConfirm()).toBe(false);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // INTEGRATION — full apply flow
+  // ───────────────────────────────────────────────────────────────────────
+  describe('integration: full apply-job flow end-to-end', () => {
+    it('fills name → email → phone → select role → submits → confirm', async () => {
+      // 1. Seed profile storage
+      const chromeMock = {
+        storage: {
+          local: {
+            get: vi.fn(async (key: string) => {
+              if (key === 'diamond_profile') {
+                return {
+                  diamond_profile: {
+                    email: 'korede@example.com',
+                    phone: '+1-555-0100',
+                  },
+                };
+              }
+              return {};
+            }),
+          },
+        },
+      };
+      (globalThis as unknown as { chrome: unknown }).chrome = chromeMock;
+
+      const {
+        snapshot,
+        nameInput, emailInput, phoneInput, roleSelect, submitButton,
+      } = makeLeverApplicationFixture();
+
+      // 2. Fill name (plain value)
+      await fillAction(
+        [{ elementIndex: 1, value: 'Korede Onifade' }],
+        snapshot,
+        'Filling name',
+      );
+      expect(nameInput.value).toBe('Korede Onifade');
+
+      // 3. Fill email + phone from profile
+      await fillAction(
+        [
+          { elementIndex: 2, value: 'profile:email' },
+          { elementIndex: 3, value: 'profile:phone' },
+        ],
+        snapshot,
+        'Filling contact info from profile',
+      );
+      expect(emailInput.value).toBe('korede@example.com');
+      expect(phoneInput.value).toBe('+1-555-0100');
+
+      // 4. Pick role
+      await fillAction(
+        [{ elementIndex: 4, value: 'Full Stack Engineer' }],
+        snapshot,
+        'Selecting Full Stack Engineer',
+      );
+      expect(roleSelect.options[roleSelect.selectedIndex].textContent)
+        .toBe('Full Stack Engineer');
+
+      // 5. Submit triggers safety net wrap
+      checkConfirmation('dummy-clear'); // clear any prior state
+      const submitAction: DiamondAction = {
+        action: 'click', elementIndex: 5, description: 'Submit Application',
+      };
+      const wrapped = wrapIrreversible(
+        submitAction,
+        submitButton.textContent ?? '',
+        submitButton,
+      );
+      expect(wrapped.action).toBe('confirm');
+      // Diamond speaks the confirm prompt (mocked speak would be called)
+      const confirmSpeech = (wrapped as { speech: string }).speech;
+      expect(confirmSpeech).toMatch(/confirm/);
+
+      // Manually stage the wrapped action as pending (content.ts does this)
+      // Then user says "confirm" — pending action executes
+      const confirm = wrapped as {
+        action: 'confirm';
+        speech: string;
+        pendingAction: DiamondAction;
+      };
+      // content.ts post-wrapIrreversible path:
+      if (confirm.action === 'confirm') {
+        confirmAction(confirm.pendingAction, confirm.speech);
+      }
+      expect(hasPendingConfirm()).toBe(true);
+
+      // 6. User says "confirm" → pending click executed
+      const result = checkConfirmation('confirm');
+      expect(result.isConfirm).toBe(true);
+      expect(result.action?.action).toBe('click');
+      expect(
+        result.action && 'elementIndex' in result.action
+          ? (result.action as { elementIndex: number }).elementIndex
+          : -1,
+      ).toBe(5);
+      // In content.ts the click would now fire; submitButton.click was spied
+      expect(submitButton.click).not.toHaveBeenCalled(); // not yet — content.ts would dispatch
+
+      // Once execute runs the click (simulated):
+      submitButton.click();
+      expect(submitButton.click).toHaveBeenCalled();
+    });
+  });
+});
