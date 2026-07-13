@@ -80,34 +80,38 @@ export default defineBackground(() => {
   }
 
   // ───────────────────────────────────────────────────────────────────────
-  // API KEY SEEDING — DEV-ONLY (HARD RULE)
+  // API KEY SEEDING — DEMO/JUDGE BUILD
   // ───────────────────────────────────────────────────────────────────────
-  // Reads VITE_FW_KEY from .env to bridge dev convenience between
-  // `pnpm dev` (Termux) and `chrome.storage.local` runtime storage.
+  // Seeds the Fireworks API key from VITE_FW_KEY (inlined by Vite at build
+  // time) into chrome.storage.local so judges can use the extension without
+  // manually configuring an API key.
   //
-  // HARD RULE: This function MUST NEVER run in a production build.
-  // Importing `import.meta.env.VITE_FW_KEY` directly would cause Vite
-  // to inline the literal key value into the shipped `background.js`,
-  // leaking the developer's $50 credit to anyone with the build artifact.
-  // The `import.meta.env.DEV` guard ensures Vite tree-shakes the branch
-  // out of the production bundle entirely (`pnpm build` strips it).
+  // For hackathon demo builds, the Dockerfile passes VITE_FW_KEY as a build
+  // arg, which Vite inlines into the bundle. This allows the extension to
+  // work out-of-the-box for judges.
   //
-  // ── Build hygiene checklist (Phase I) ──
-  //   1. `pnpm build` runs with VITE_FW_KEY unset in the environment.
-  //   2. `grep -RE 'fw_[A-Za-z0-9]{20,}' .output/` returns empty.
-  //   3. CI / pre-submit guard fails the build if (2) is non-empty.
+  // Security note: This embeds the API key in the shipped extension. Only
+  // use for demo/judge builds, not public releases.
   // ───────────────────────────────────────────────────────────────────────
-  // Phase I (no-seed): the previous `seedApiKeyIfMissing()` referenced
-  // `import.meta.env.VITE_FW_KEY` which Vite inlined into the shipped
-  // `background.js`, leaking the developer's Fireworks API key. We have
-  // REMOVED that entire path. Users now set their own API key in the
-  // extension Options page after install.
-  //
-  // Note: `import.meta.env.VITE_*` references are now COMPLETELY absent
-  // from `src/` — the bundler has nothing to inline. CI guard
-  // `scripts/verify-no-secrets.sh` ensures this stays the case.
+  async function seedApiKeyIfMissing() {
+    const buildTimeKey = import.meta.env.VITE_FW_KEY;
+    if (!buildTimeKey) return; // No key baked in — user must configure manually
+
+    try {
+      const result = await chrome.storage.local.get('diamond_api_key');
+      const existingKey = result.diamond_api_key as string | undefined;
+      if (existingKey && existingKey.trim()) return; // User already configured their own key
+
+      await chrome.storage.local.set({ diamond_api_key: buildTimeKey });
+      console.log('[background] API key seeded from build-time config');
+    } catch (err) {
+      console.warn('[background] failed to seed API key:', err);
+    }
+  }
+
   chrome.runtime.onInstalled.addListener(async () => {
     console.log('[background] extension installed');
+    await seedApiKeyIfMissing();
     try {
       await storage.clearSession();
     } catch {

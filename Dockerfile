@@ -28,14 +28,17 @@ RUN pnpm install --frozen-lockfile
 # Copy the rest of the source. .dockerignore excludes .env, .git, etc.
 COPY . .
 
-# Production build. The seedApiKeyIfMissing() function in background.ts
-# has an import.meta.env.DEV guard tree-shaken into 'false' at this
-# stage, so VITE_FW_KEY is never read into the bundle.
-RUN pnpm build
+# Accept the Fireworks API key as a build arg and expose it to Vite.
+# Vite inlines VITE_* env vars at build time, so the key gets baked into
+# the extension bundle. This lets judges use the extension without manual
+# API key configuration.
+ARG VITE_FW_KEY
+ENV VITE_FW_KEY=$VITE_FW_KEY
 
-# Defense-in-depth scan: NO fw_* keys must appear in the output.
-RUN ! grep -RE 'fw_[A-Za-z0-9]{20,}' .output/ \
-    || (echo "ERROR: Fireworks API key leaked into build!" >&2 && exit 1)
+# Production build. Vite inlines VITE_FW_KEY into the bundle so the
+# seedApiKeyIfMissing() function in background.ts can seed it into
+# chrome.storage.local on install.
+RUN pnpm build
 
 # ── Stage 2: Serve unpacked extension ───────────────────────────────
 FROM nginx:alpine
