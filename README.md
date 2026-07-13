@@ -47,6 +47,134 @@ That's it. Navigate to any page, press **Alt+D**, and speak.
 
 ---
 
+## Running with Docker
+
+For judges, evaluators, or quick deployment, Diamond can be built and served via Docker with the API key embedded.
+
+### Build the Docker Image
+
+```bash
+# Clone the repo
+git clone https://github.com/kore4lyf/diamond-access-ai
+cd diamond-access-ai
+
+# Build with your Fireworks API key
+docker build --build-arg VITE_FW_KEY=fw_YOUR_API_KEY_HERE -t diamond-access-ai .
+```
+
+Replace `fw_YOUR_API_KEY_HERE` with your actual Fireworks API key. Get one at [fireworks.ai](https://fireworks.ai).
+
+**What this does:**
+- Builds the Chrome extension using WXT
+- Embeds your API key into the extension bundle (so judges don't need to configure it manually)
+- Creates an nginx server that serves the unpacked extension files
+- Image size: ~150MB
+
+### Run the Container
+
+```bash
+docker run -d -p 80:80 --name diamond diamond-access-ai
+```
+
+**Flags explained:**
+- `-d` — Run in detached mode (background)
+- `-p 80:80` — Map container port 80 to host port 80
+- `--name diamond` — Name the container "diamond"
+
+### Verify the Server is Running
+
+```bash
+curl http://localhost/manifest.json
+```
+
+You should see the extension's manifest.json content.
+
+### Load the Extension in Chrome
+
+**Option 1: Extract files from the running container**
+
+```bash
+# Copy extension files from container to your machine
+docker cp diamond:/usr/share/nginx/html ./diamond-extension
+```
+
+Then load in Chrome:
+1. Open `chrome://extensions/`
+2. Enable **Developer mode** (top-right)
+3. Click **"Load unpacked"**
+4. Select the `./diamond-extension` folder
+
+**Option 2: Download from a remote server**
+
+If the container is running on a remote server (e.g., `http://129.212.201.11`):
+
+```bash
+# Download the entire extension directory
+wget -r -np -nH --cut-dirs=1 http://YOUR_SERVER_IP/ -P diamond-extension/
+```
+
+Then load the `diamond-extension` folder in Chrome (same steps as above).
+
+### Using the Extension
+
+The API key is already embedded — no manual configuration needed.
+
+1. Navigate to any website (e.g., `bbc.com/news`)
+2. Press **Alt+D**
+3. Say: **"summarize this page"**
+4. Diamond will read the page summary aloud
+
+**Example commands:**
+- `"list the headlines"` — Lists all links on the page
+- `"go to the first article"` — Navigates to the first link
+- `"find the cheapest option"` — Goal detection (on shopping sites)
+- `"fill my contact info"` — Auto-fills forms (if profile is set in Options)
+
+### Troubleshooting
+
+**Extension not loading:**
+- Make sure you selected the correct directory (contains `manifest.json`)
+
+**API key not working:**
+- Rebuild the Docker image with the correct key
+- Check your API key at [fireworks.ai/api-keys](https://fireworks.ai/api-keys)
+
+**No audio output:**
+- Check browser permissions (site settings → sound)
+- Ensure system audio is not muted
+
+**Alt+D not working:**
+- Some pages (chrome://, extension pages) block content scripts
+- Use `Ctrl+Shift+D` instead, or click the Diamond icon manually
+
+**Docker container not starting:**
+```bash
+# Check container logs
+docker logs diamond
+
+# Restart container
+docker restart diamond
+
+# Remove and recreate
+docker stop diamond && docker rm diamond
+docker run -d -p 80:80 --name diamond diamond-access-ai
+```
+
+### Stopping the Container
+
+```bash
+# Stop the container
+docker stop diamond
+
+# Remove the container
+docker rm diamond
+
+# Remove the image (optional)
+docker rmi diamond-access-ai
+```
+
+---
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
