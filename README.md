@@ -3,8 +3,6 @@
 Voice-first browser accessibility assistant for blind and low-vision users.
 A Chrome extension (MV3) that reads pages, answers questions, and performs actions — all by voice.
 
-**Built for AMD Developer Hackathon: ACT II** | July 6–11, 2026 | Unicorn Track
-
 ---
 
 ## Features
